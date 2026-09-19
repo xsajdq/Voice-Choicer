@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Voice Choicer</string>
+    <string name="export_notification_title">Budowanie dubbingu</string>
+    <string name="export_notification_progress">Postęp: %1$d%%</string>
+</resources>
