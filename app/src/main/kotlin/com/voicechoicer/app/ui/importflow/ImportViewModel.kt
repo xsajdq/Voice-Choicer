@@ -19,6 +19,7 @@ data class ImportUiState(
     val videoFileName: String? = null,
     val subtitleUri: Uri? = null,
     val subtitleFileName: String? = null,
+    val pastedTranscript: String = "",
     val progress: ImportProgress? = null,
     val error: String? = null,
 ) {
@@ -45,10 +46,20 @@ class ImportViewModel @Inject constructor(
     }
 
     fun onSubtitlePicked(uri: Uri?, fileName: String?) = _state.update {
-        it.copy(subtitleUri = uri, subtitleFileName = fileName)
+        // A picked file and pasted text are alternative sources for the same thing - only one
+        // can win, so picking a file clears any pasted text to avoid silently ignoring it.
+        it.copy(subtitleUri = uri, subtitleFileName = fileName, pastedTranscript = "")
     }
 
     fun clearSubtitle() = _state.update { it.copy(subtitleUri = null, subtitleFileName = null) }
+
+    fun onPastedTranscriptChange(text: String) = _state.update {
+        if (text.isBlank()) {
+            it.copy(pastedTranscript = text)
+        } else {
+            it.copy(pastedTranscript = text, subtitleUri = null, subtitleFileName = null)
+        }
+    }
 
     /** Navigation on success is driven by the UI observing [state].progress becoming [ImportProgress.Done]. */
     fun startImport() {
@@ -61,6 +72,7 @@ class ImportViewModel @Inject constructor(
                     title = current.title.ifBlank { "Bez nazwy" },
                     videoUri = videoUri,
                     subtitleUri = current.subtitleUri,
+                    pastedTranscript = current.pastedTranscript.ifBlank { null },
                 ) { progress -> _state.update { it.copy(progress = progress) } }
             } catch (t: Throwable) {
                 Log.e(TAG, "Import failed", t)

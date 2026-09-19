@@ -93,10 +93,10 @@ fun ImportScreen(
                 Text(
                     "Jeśli dodasz napisy .srt/.vtt, aplikacja precyzyjnie podzieli film na kwestie i " +
                         "rozpozna postacie po formacie „IMIĘ: tekst” lub dialogach z myślnikiem. Możesz też " +
-                        "wkleić eksport transkrypcji z TurboScribe (tekst z znacznikami czasu w nawiasach, " +
-                        "np. „(0:04) Wystarczy.”) jako plik .txt — postacie zostaną wtedy rozpoznane z " +
-                        "dźwięku filmu (tak jak bez napisów). Bez żadnego pliku film zostanie podzielony " +
-                        "automatycznie na podstawie mowy, a tekst rozpoznany offline.",
+                        "wybrać plik albo wkleić poniżej eksport transkrypcji z TurboScribe (tekst ze " +
+                        "znacznikami czasu w nawiasach, np. „(0:04) Wystarczy.”) — postacie zostaną wtedy " +
+                        "rozpoznane z dźwięku filmu (tak jak bez napisów). Bez żadnego z tego film zostanie " +
+                        "podzielony automatycznie na podstawie mowy, a tekst rozpoznany offline.",
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                 )
                 if (state.subtitleFileName != null) {
@@ -111,11 +111,30 @@ fun ImportScreen(
                 } else {
                     OutlinedButton(
                         onClick = { subtitlePicker.launch(arrayOf("*/*")) },
-                        enabled = !state.isImporting,
+                        enabled = !state.isImporting && state.pastedTranscript.isBlank(),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Wybierz plik napisów")
                     }
+                    Text(
+                        "albo wklej tekst poniżej:",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    )
+                    TextField(
+                        value = state.pastedTranscript,
+                        onValueChange = viewModel::onPastedTranscriptChange,
+                        label = { Text("Wklejona transkrypcja (np. z TurboScribe)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.isImporting,
+                        minLines = 4,
+                        trailingIcon = if (state.pastedTranscript.isNotBlank()) {
+                            {
+                                IconButton(onClick = { viewModel.onPastedTranscriptChange("") }, enabled = !state.isImporting) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Wyczyść wklejony tekst")
+                                }
+                            }
+                        } else null,
+                    )
                 }
             }
 

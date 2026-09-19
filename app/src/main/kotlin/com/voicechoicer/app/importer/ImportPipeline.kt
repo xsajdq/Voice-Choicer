@@ -33,10 +33,10 @@ sealed interface ImportProgress {
 }
 
 /**
- * Orchestrates turning a picked video (+ optional subtitle file) into a
- * fully-formed project: copy the clip locally, split it into fragments
- * (from subtitles when available, otherwise via silence detection plus
- * offline speech-to-text and real ML-based speaker diarization), detect
+ * Orchestrates turning a picked video (+ optional subtitle text, from a picked .srt/.vtt file or
+ * pasted directly, e.g. a TurboScribe transcript export) into a fully-formed project: copy the
+ * clip locally, split it into fragments (from the subtitle text when available, otherwise via
+ * silence detection plus offline speech-to-text and real ML-based speaker diarization), detect
  * characters, and persist everything.
  */
 class ImportPipeline @Inject constructor(
@@ -52,6 +52,7 @@ class ImportPipeline @Inject constructor(
         title: String,
         videoUri: Uri,
         subtitleUri: Uri?,
+        pastedTranscript: String? = null,
         onProgress: (ImportProgress) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
         onProgress(ImportProgress.CopyingVideo)
@@ -62,16 +63,21 @@ class ImportPipeline @Inject constructor(
             }
             val durationMs = videoProbe.durationMs(videoFile.absolutePath).coerceAtLeast(1)
 
+            // A pasted transcript and a picked file are alternative sources for the same thing;
+            // the UI only ever sends one of them (see ImportViewModel), but prefer the paste if
+            // somehow both are set, since it needs no file I/O.
+            val subtitleText = pastedTranscript?.takeIf { it.isNotBlank() }
+                ?: subtitleUri?.let { fileStore.readText(it) }
+
             var warning: String? = null
-            val (characters, fragments) = if (subtitleUri != null) {
+            val (characters, fragments) = if (subtitleText != null) {
                 onProgress(ImportProgress.ReadingSubtitles)
-                val text = fileStore.readText(subtitleUri)
-                if (TurboScribeParser.looksLikeTurboScribe(text)) {
-                    val result = buildFromTurboScribeText(text, videoFile.absolutePath, durationMs, onProgress)
+                if (TurboScribeParser.looksLikeTurboScribe(subtitleText)) {
+                    val result = buildFromTurboScribeText(subtitleText, videoFile.absolutePath, durationMs, onProgress)
                     warning = result.warning
                     result.characters to result.fragments
                 } else {
-                    buildFromSubtitles(text, durationMs)
+                    buildFromSubtitles(subtitleText, durationMs)
                 }
             } else {
                 val result = buildFromAutoDetection(videoFile.absolutePath, durationMs, onProgress)

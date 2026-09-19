@@ -8,20 +8,21 @@ siebie.
 
 ## Jak to działa
 
-1. **Import** — wybierasz plik wideo z urządzenia. Opcjonalnie dołączasz
-   plik napisów `.srt`/`.vtt` albo eksport transkrypcji z TurboScribe:
+1. **Import** — wybierasz plik wideo z urządzenia. Opcjonalnie dodajesz
+   napisy `.srt`/`.vtt` (jako plik) albo transkrypcję TurboScribe (jako plik
+   `.txt` albo po prostu wklejony tekst — jest osobne pole do wklejenia):
    - **Z napisami .srt/.vtt**: aplikacja dzieli klip dokładnie według linii
      napisów i próbuje wykryć postacie po formacie `IMIĘ: tekst` oraz po
      dialogach z myślnikiem (`- Cześć!` / `- Hej!` w jednej linii czasowej).
-   - **Z transkrypcją TurboScribe** (plik `.txt` wklejony z eksportu
-     TurboScribe, rozpoznawany automatycznie po znacznikach czasu w
-     nawiasach, np. `(0:04) Wystarczy.`): aplikacja rozdziela tekst na
-     kwestie po tych znacznikach (koniec każdej kwestii = początek
-     następnej), więc tekst jest od razu dokładny — bez błędów offline'owej
-     transkrypcji. TurboScribe nie eksportuje jednak informacji o mówcach,
-     więc postacie są wykrywane z dźwięku filmu dokładnie tak samo jak w
-     ścieżce bez napisów poniżej (prawdziwa diaryzacja ML, z heurystyką
-     wysokości głosu jako fallbackiem).
+   - **Z transkrypcją TurboScribe** (rozpoznawana automatycznie po
+     znacznikach czasu w nawiasach, np. `(0:04) Wystarczy.` — czy to z pliku,
+     czy wklejona ręcznie): aplikacja rozdziela tekst na kwestie po tych
+     znacznikach (koniec każdej kwestii = początek następnej), więc tekst
+     jest od razu dokładny — bez błędów offline'owej transkrypcji.
+     TurboScribe nie eksportuje jednak informacji o mówcach, więc postacie
+     są wykrywane z dźwięku filmu dokładnie tak samo jak w ścieżce bez
+     napisów poniżej (prawdziwa diaryzacja ML, z heurystyką wysokości głosu
+     jako fallbackiem).
    - **Bez napisów**: aplikacja dekoduje ścieżkę dźwiękową, transkrybuje
      cały fragment offline w jednym przebiegu (model Whisper "base",
      wielojęzyczny, wbudowany w aplikację — działa całkowicie bez
