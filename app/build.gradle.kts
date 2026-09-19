@@ -97,6 +97,14 @@ val downloadVoskModel = tasks.register("downloadVoskModel") {
                 entry = zip.nextEntry
             }
         }
+
+        // Vosk's StorageService.unpack() reads <model>/uuid at runtime to decide whether its
+        // cached copy in internal storage is stale, but the plain model zips from alphacephei
+        // don't ship that file, which makes unpacking fail outright ("Failed to unpack the
+        // model: model-pl-small/uuid"). See https://github.com/alphacep/vosk-api/issues/846 -
+        // any stable, non-empty content works; it's only ever compared to itself.
+        File(assetsDir, "uuid").writeText("vosk-model-small-pl-$voskModelVersion")
+
         markerFile.parentFile.mkdirs()
         markerFile.writeText(voskModelVersion)
     }
