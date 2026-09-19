@@ -28,11 +28,19 @@ jobs:
 
       - name: Ensure required Android SDK packages
         run: |
-          set -e
           echo "ANDROID_HOME=$ANDROID_HOME"
-          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 2 -name sdkmanager -type f 2>/dev/null | sort -V | tail -n1)
-          if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER=$(command -v sdkmanager)
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "No sdkmanager at $SDKMANAGER, searching under \$ANDROID_HOME/cmdline-tools..."
+            FOUND=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort -V | tail -n1)
+            if [ -n "$FOUND" ]; then
+              SDKMANAGER="$FOUND"
+            elif command -v sdkmanager >/dev/null 2>&1; then
+              SDKMANAGER="$(command -v sdkmanager)"
+            else
+              echo "Could not locate sdkmanager anywhere" >&2
+              exit 1
+            fi
           fi
           echo "Using sdkmanager: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
