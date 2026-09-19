@@ -15,10 +15,10 @@ siebie.
      myślnikiem (`- Cześć!` / `- Hej!` w jednej linii czasowej).
    - **Bez napisów**: aplikacja dekoduje ścieżkę dźwiękową, wykrywa mowę
      metodą energii sygnału (VAD oparte na ciszy), automatycznie
-     transkrybuje każdy fragment offline (biblioteka Vosk z wbudowanym
-     modelem języka polskiego — działa całkowicie bez internetu) i
-     grupuje fragmenty na postacie na podstawie wysokości głosu (prosta
-     heurystyka, nie prawdziwa diaryzacja ML — patrz niżej).
+     transkrybuje każdy fragment offline (model Whisper "base", wielojęzyczny,
+     wbudowany w aplikację — działa całkowicie bez internetu) i grupuje
+     fragmenty na postacie na podstawie wysokości głosu (prosta heurystyka,
+     nie prawdziwa diaryzacja ML — patrz niżej).
 2. **Postacie** — zmieniasz nazwy wykrytych postaci, przypisujesz do nich
    graczy.
 3. **Gracze** — dodajesz osoby, które będą nagrywać głosy.
@@ -40,8 +40,9 @@ siebie.
     na fragmenty.
   - `audio/SilenceSegmenter.kt` — detekcja mowy na podstawie ciszy (fallback
     bez napisów).
-  - `audio/Resampler.kt` — prosty resampler PCM (np. 44.1 kHz → 16 kHz dla
-    Vosk).
+  - `audio/Resampler.kt` — prosty resampler PCM (ogólnego użytku; obecny
+    silnik transkrypcji resampluje sam, ale zostawiony jako przetestowane
+    narzędzie do ew. przyszłego użytku).
   - `audio/PitchEstimator.kt` — szacowanie wysokości głosu metodą
     autokorelacji, sygnał wejściowy dla grupowania postaci.
   - `audio/SpeakerClusterer.kt` — grupowanie fragmentów na postacie na
@@ -58,9 +59,9 @@ siebie.
   - `importer/ImportPipeline.kt` — łączy `core` z Androidowym I/O
     (kopiowanie pliku, dekodowanie audio, zapis do bazy).
   - `media/` — `AudioDecoder` (MediaExtractor+MediaCodec → PCM),
-    `VoskTranscriber` (offline rozpoznawanie mowy, model polski wbudowany
-    w assets), `TakeRecorder` (AudioRecord), `DubExporter` (MediaCodec AAC
-    encoder + MediaMuxer, kopiowanie ścieżki wideo 1:1).
+    `WhisperTranscriber` (offline rozpoznawanie mowy, model Whisper
+    wbudowany w assets), `TakeRecorder` (AudioRecord), `DubExporter`
+    (MediaCodec AAC encoder + MediaMuxer, kopiowanie ścieżki wideo 1:1).
   - `export/ExportService.kt` — usługa pierwszoplanowa budująca finalny plik
     w tle, z powiadomieniem o postępie.
   - `ui/` — ekrany Compose: lista projektów, import, postacie, gracze,
@@ -83,8 +84,8 @@ modułu `app`**. Żeby zbudować i uruchomić aplikację:
 
 Minimalne wymagania: Android Studio Koala+ / Gradle z dostępem do
 `google()` i `mavenCentral()`, `minSdk 26`, `compileSdk/targetSdk 35`, oraz
-dostęp do internetu przy pierwszym buildzie (pobranie modelu Vosk, patrz
-niżej — ~50 MB, potem cache'owane w `~/.vosk-model-cache`).
+dostęp do internetu przy pierwszym buildzie (pobranie modelu Whisper, patrz
+niżej — ~142 MB, potem cache'owane w `~/.whisper-model-cache`).
 
 ### Moduł `core` — działa od razu, bez Androida
 
@@ -101,14 +102,17 @@ gradle :core:test
 Gdy nie podasz pliku napisów, aplikacja robi wszystko sama, ale w pełni
 offline'owy, telefoniczny pipeline ma swoje granice:
 
-- **Transkrypcja (Vosk)**: mały model polski (`vosk-model-small-pl-0.22`,
-  ~50 MB, Apache 2.0, projekt Alphacephei) jest pobierany **przy budowaniu
-  aplikacji** (zadanie Gradle `downloadVoskModel`) i wbudowywany w APK —
-  nie jest w repozytorium (zbyt duży plik binarny), więc **do zbudowania
-  potrzebny jest dostęp do internetu** (pobiera się raz, potem jest
-  cache'owany). Model "small" jest szybki i lekki, ale mniej dokładny niż
-  duże modele chmurowe — oczekuj sensownej, ale nie perfekcyjnej
-  transkrypcji, zwłaszcza przy szumie w tle, gwarze lub szybkiej mowie.
+- **Transkrypcja (Whisper)**: wielojęzyczny model `ggml-base` (~142 MB,
+  MIT, projekt whisper.cpp/OpenAI, poprzez bibliotekę
+  `dev.ffmpegkit-maintained:whisper-android`) jest pobierany **przy
+  budowaniu aplikacji** (zadanie Gradle `downloadWhisperModel`) i
+  wbudowywany w APK — nie jest w repozytorium (zbyt duży plik binarny),
+  więc **do zbudowania potrzebny jest dostęp do internetu** (pobiera się
+  raz, potem jest cache'owany). Whisper "base" jest wyraźnie dokładniejszy
+  niż małe modele oparte na Kaldi (np. Vosk "small", którego używaliśmy
+  wcześniej) przy podobnym rozmiarze, kosztem wolniejszej transkrypcji i
+  wymogu ABI `arm64-v8a` (biblioteka nie ma prebudowanych binarek dla
+  starszych 32-bitowych urządzeń ani emulatorów x86).
 - **Grupowanie na postacie**: to **heurystyka**, nie prawdziwa diaryzacja
   ML — `PitchEstimator` szacuje wysokość głosu (autokorelacja), a
   `SpeakerClusterer` grupuje fragmenty o podobnej wysokości głosu
@@ -124,8 +128,8 @@ offline'owy, telefoniczny pipeline ma swoje granice:
 - **Prawdziwa diaryzacja mówców** (np. embeddingi głosu + klasteryzacja,
   zamiast samej wysokości tonu) — dokładniejsza, ale wymaga dodatkowego
   modelu ML i znacznie więcej pracy.
-- **Większy/dokładniejszy model Vosk** — kosztem rozmiaru APK i czasu
-  transkrypcji.
+- **Większy model Whisper** (`small`, ~466 MB) — kosztem rozmiaru APK i
+  czasu transkrypcji, dla jeszcze lepszej dokładności.
 - **Synchronizacja długości nagrania z oryginałem** — obecnie nagranie
   gracza jest wklejane od czasu startu oryginalnej kwestii; jeśli gracz
   mówi dłużej niż oryginał, nagranie nakłada się na kolejny fragment

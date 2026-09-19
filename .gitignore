@@ -13,5 +13,5 @@ app/build/
 core/build/
 /.kotlin/
 
-# Downloaded at build time by the :app:downloadVoskModel Gradle task (see app/build.gradle.kts).
-app/src/main/assets/model-pl-small/
+# Downloaded at build time by the :app:downloadWhisperModel Gradle task (see app/build.gradle.kts).
+app/src/main/assets/whisper-model/

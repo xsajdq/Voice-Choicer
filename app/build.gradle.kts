@@ -1,5 +1,4 @@
 import java.net.URI
-import java.util.zip.ZipInputStream
 
 plugins {
     alias(libs.plugins.android.application)
@@ -49,69 +48,41 @@ android {
     }
 }
 
-// Offline speech recognition needs a Vosk acoustic model bundled as an asset. The model is a
-// ~50MB binary blob, so it is fetched at build time (and cached under the user's home directory
-// across builds/CI runs) rather than committed to the repository - see .gitignore for the
-// resulting src/main/assets/model-pl-small/ directory.
-val voskModelVersion = "0.22"
-val voskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-pl-$voskModelVersion.zip"
-val voskModelAssetsDir = layout.projectDirectory.dir("src/main/assets/model-pl-small")
+// Offline speech recognition needs a Whisper (ggml) model bundled as an asset - a single ~142MB
+// binary file, fetched at build time (and cached under the user's home directory across
+// builds/CI runs) rather than committed to the repository - see .gitignore for the resulting
+// src/main/assets/whisper-model/ directory. "base" (not "base.en") is the multilingual checkpoint,
+// needed for Polish.
+val whisperModelFileName = "ggml-base.bin"
+val whisperModelUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$whisperModelFileName"
+val whisperModelAssetsDir = layout.projectDirectory.dir("src/main/assets/whisper-model")
 
-val downloadVoskModel = tasks.register("downloadVoskModel") {
-    description = "Downloads and stages the offline Polish speech-recognition model into app assets."
-    val assetsDir = voskModelAssetsDir.asFile
-    // Kept outside assetsDir on purpose: Vosk's Model loader walks that whole directory expecting
-    // only the model's own files, and we don't want to risk it tripping over an extra stray file.
-    val markerFile = layout.buildDirectory.file("vosk-model-version.txt").get().asFile
-    outputs.dir(assetsDir)
-    onlyIf { !markerFile.exists() || markerFile.readText().trim() != voskModelVersion }
+val downloadWhisperModel = tasks.register("downloadWhisperModel") {
+    description = "Downloads and stages the offline multilingual Whisper speech-recognition model into app assets."
+    val assetsDir = whisperModelAssetsDir.asFile
+    val destFile = File(assetsDir, whisperModelFileName)
+    outputs.file(destFile)
+    onlyIf { !destFile.exists() }
 
     doLast {
-        if (assetsDir.exists()) assetsDir.deleteRecursively()
         assetsDir.mkdirs()
-
-        val cacheDir = File(System.getProperty("user.home"), ".vosk-model-cache")
+        val cacheDir = File(System.getProperty("user.home"), ".whisper-model-cache")
         cacheDir.mkdirs()
-        val zipFile = File(cacheDir, "vosk-model-small-pl-$voskModelVersion.zip")
-        if (!zipFile.exists()) {
-            logger.lifecycle("Downloading Vosk Polish model from $voskModelUrl ...")
-            URI(voskModelUrl).toURL().openStream().use { input ->
-                zipFile.outputStream().use { output -> input.copyTo(output) }
+        val cachedFile = File(cacheDir, whisperModelFileName)
+        if (!cachedFile.exists()) {
+            logger.lifecycle("Downloading Whisper model from $whisperModelUrl ...")
+            URI(whisperModelUrl).toURL().openStream().use { input ->
+                cachedFile.outputStream().use { output -> input.copyTo(output) }
             }
         } else {
-            logger.lifecycle("Using cached Vosk model archive at $zipFile")
+            logger.lifecycle("Using cached Whisper model at $cachedFile")
         }
-
-        logger.lifecycle("Unpacking Vosk model into $assetsDir ...")
-        ZipInputStream(zipFile.inputStream()).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                // Zip entries are "vosk-model-small-pl-<version>/<rest>"; drop that top-level dir.
-                val relativePath = entry.name.substringAfter('/', missingDelimiterValue = "")
-                if (relativePath.isNotEmpty() && !entry.isDirectory) {
-                    val outFile = File(assetsDir, relativePath)
-                    outFile.parentFile.mkdirs()
-                    outFile.outputStream().use { output -> zip.copyTo(output) }
-                }
-                zip.closeEntry()
-                entry = zip.nextEntry
-            }
-        }
-
-        // Vosk's StorageService.unpack() reads <model>/uuid at runtime to decide whether its
-        // cached copy in internal storage is stale, but the plain model zips from alphacephei
-        // don't ship that file, which makes unpacking fail outright ("Failed to unpack the
-        // model: model-pl-small/uuid"). See https://github.com/alphacep/vosk-api/issues/846 -
-        // any stable, non-empty content works; it's only ever compared to itself.
-        File(assetsDir, "uuid").writeText("vosk-model-small-pl-$voskModelVersion")
-
-        markerFile.parentFile.mkdirs()
-        markerFile.writeText(voskModelVersion)
+        cachedFile.copyTo(destFile, overwrite = true)
     }
 }
 
 tasks.named("preBuild") {
-    dependsOn(downloadVoskModel)
+    dependsOn(downloadWhisperModel)
 }
 
 dependencies {
@@ -147,7 +118,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
 
-    implementation(libs.vosk.android)
+    implementation(libs.whisper.android)
 
     testImplementation(libs.junit)
 }

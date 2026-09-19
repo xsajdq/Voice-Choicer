@@ -5,9 +5,8 @@ import com.voicechoicer.app.data.ProjectRepository
 import com.voicechoicer.app.data.files.AppFileStore
 import com.voicechoicer.app.media.AudioDecoder
 import com.voicechoicer.app.media.VideoProbe
-import com.voicechoicer.app.media.VoskTranscriber
+import com.voicechoicer.app.media.WhisperTranscriber
 import com.voicechoicer.core.audio.PitchEstimator
-import com.voicechoicer.core.audio.Resampler
 import com.voicechoicer.core.audio.SilenceSegmenter
 import com.voicechoicer.core.audio.SpeakerClusterer
 import com.voicechoicer.core.model.DetectedCharacter
@@ -15,6 +14,8 @@ import com.voicechoicer.core.model.Fragment
 import com.voicechoicer.core.subtitle.SpeakerDetector
 import com.voicechoicer.core.subtitle.SubtitleParser
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 sealed interface ImportProgress {
     data object CopyingVideo : ImportProgress
@@ -37,7 +38,7 @@ class ImportPipeline @Inject constructor(
     private val fileStore: AppFileStore,
     private val videoProbe: VideoProbe,
     private val audioDecoder: AudioDecoder,
-    private val voskTranscriber: VoskTranscriber,
+    private val whisperTranscriber: WhisperTranscriber,
     private val repository: ProjectRepository,
 ) {
 
@@ -46,7 +47,7 @@ class ImportPipeline @Inject constructor(
         videoUri: Uri,
         subtitleUri: Uri?,
         onProgress: (ImportProgress) -> Unit,
-    ): Long {
+    ): Long = withContext(Dispatchers.IO) {
         onProgress(ImportProgress.CopyingVideo)
         val videoFile = fileStore.importVideo(videoUri)
         try {
@@ -98,9 +99,10 @@ class ImportPipeline @Inject constructor(
 
     /**
      * No subtitles: find speech segments by silence detection, transcribe each one offline
-     * (Vosk, Polish model - falls back to empty text if the model failed to load), estimate a
-     * voice-pitch feature per segment, and cluster those pitches into automatically-detected
-     * "characters". This is a heuristic, not real diarization - see SpeakerClusterer's docs.
+     * (Whisper, multilingual model - falls back to empty text if the model failed to load),
+     * estimate a voice-pitch feature per segment, and cluster those pitches into
+     * automatically-detected "characters". This is a heuristic, not real diarization - see
+     * SpeakerClusterer's docs.
      */
     private suspend fun buildFromSilenceDetection(
         videoPath: String,
@@ -114,9 +116,9 @@ class ImportPipeline @Inject constructor(
             "Nie udało się wykryć żadnych fragmentów mowy. Spróbuj dołączyć plik napisów (.srt/.vtt)."
         }
 
-        val transcriptionAvailable = voskTranscriber.ensureLoaded()
+        val transcriptionAvailable = whisperTranscriber.ensureLoaded()
         val warning = if (!transcriptionAvailable) {
-            "Rozpoznawanie mowy niedostępne (${voskTranscriber.lastError ?: "nieznany błąd"}) — wpisz tekst kwestii ręcznie."
+            "Rozpoznawanie mowy niedostępne (${whisperTranscriber.lastError ?: "nieznany błąd"}) — wpisz tekst kwestii ręcznie."
         } else {
             null
         }
@@ -132,8 +134,7 @@ class ImportPipeline @Inject constructor(
 
             val pitch = PitchEstimator.estimateAveragePitchHz(segmentPcm, decoded.sampleRate)
             val text = if (transcriptionAvailable) {
-                val resampled = Resampler.resample(segmentPcm, decoded.sampleRate, VoskTranscriber.SAMPLE_RATE)
-                voskTranscriber.transcribe(resampled)
+                whisperTranscriber.transcribe(segmentPcm, decoded.sampleRate)
             } else {
                 ""
             }

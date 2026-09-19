@@ -5,15 +5,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import dagger.hilt.android.HiltAndroidApp
-import org.vosk.LibVosk
-import org.vosk.LogLevel
 
 @HiltAndroidApp
 class VoiceChoicerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        LibVosk.setLogLevel(LogLevel.WARNINGS)
         createExportNotificationChannel()
     }
 

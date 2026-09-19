@@ -5,8 +5,8 @@ import kotlin.math.roundToInt
 
 /**
  * Minimal linear-interpolation resampler for mono PCM16. Good enough to
- * bring device-native audio (44.1/48 kHz) down to the 16 kHz that offline
- * speech recognizers like Vosk expect - not broadcast-quality, but speech
+ * bring device-native audio (44.1/48 kHz) down to whatever fixed rate an
+ * offline speech recognizer expects - not broadcast-quality, but speech
  * intelligibility survives linear interpolation just fine.
  */
 object Resampler {
