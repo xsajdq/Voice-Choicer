@@ -9,10 +9,19 @@ siebie.
 ## Jak to działa
 
 1. **Import** — wybierasz plik wideo z urządzenia. Opcjonalnie dołączasz
-   plik napisów `.srt`/`.vtt`:
-   - **Z napisami**: aplikacja dzieli klip dokładnie według linii napisów i
-     próbuje wykryć postacie po formacie `IMIĘ: tekst` oraz po dialogach z
-     myślnikiem (`- Cześć!` / `- Hej!` w jednej linii czasowej).
+   plik napisów `.srt`/`.vtt` albo eksport transkrypcji z TurboScribe:
+   - **Z napisami .srt/.vtt**: aplikacja dzieli klip dokładnie według linii
+     napisów i próbuje wykryć postacie po formacie `IMIĘ: tekst` oraz po
+     dialogach z myślnikiem (`- Cześć!` / `- Hej!` w jednej linii czasowej).
+   - **Z transkrypcją TurboScribe** (plik `.txt` wklejony z eksportu
+     TurboScribe, rozpoznawany automatycznie po znacznikach czasu w
+     nawiasach, np. `(0:04) Wystarczy.`): aplikacja rozdziela tekst na
+     kwestie po tych znacznikach (koniec każdej kwestii = początek
+     następnej), więc tekst jest od razu dokładny — bez błędów offline'owej
+     transkrypcji. TurboScribe nie eksportuje jednak informacji o mówcach,
+     więc postacie są wykrywane z dźwięku filmu dokładnie tak samo jak w
+     ścieżce bez napisów poniżej (prawdziwa diaryzacja ML, z heurystyką
+     wysokości głosu jako fallbackiem).
    - **Bez napisów**: aplikacja dekoduje ścieżkę dźwiękową, transkrybuje
      cały fragment offline w jednym przebiegu (model Whisper "base",
      wielojęzyczny, wbudowany w aplikację — działa całkowicie bez
@@ -38,8 +47,11 @@ siebie.
 - **`core/`** — czysty moduł Kotlin/JVM (bez zależności od Androida),
   łatwy do przetestowania jednostkowo:
   - `subtitle/SubtitleParser.kt` — parser `.srt`/`.vtt`.
+  - `subtitle/TurboScribeParser.kt` — parser eksportu transkrypcji TurboScribe
+    (tekst ciągły ze znacznikami czasu `(M:SS)`/`(H:MM:SS)` w nawiasach przed
+    każdą kwestią, bez bloków jak w .srt/.vtt).
   - `subtitle/SpeakerDetector.kt` — heurystyki wykrywania postaci i dzielenia
-    na fragmenty.
+    na fragmenty (dla plików .srt/.vtt).
   - `audio/SilenceSegmenter.kt` — detekcja mowy na podstawie ciszy (fallback
     bez napisów).
   - `audio/Resampler.kt` — prosty resampler PCM (ogólnego użytku; obecny
@@ -102,7 +114,7 @@ wystarcza dla samego Gradle/AGP).
 
 `core` to zwykły moduł Kotlin/JVM, więc jego testy jednostkowe uruchamiają
 się nawet w tym kontenerze (i zostały tu faktycznie uruchomione podczas
-tworzenia projektu — 42 testy, wszystkie zielone):
+tworzenia projektu — 50 testów, wszystkie zielone):
 
 ```bash
 gradle :core:test

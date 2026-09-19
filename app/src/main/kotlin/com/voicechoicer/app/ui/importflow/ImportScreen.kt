@@ -89,11 +89,14 @@ fun ImportScreen(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Plik napisów .srt/.vtt (opcjonalnie)")
+                Text("Plik napisów .srt/.vtt lub transkrypcja TurboScribe (opcjonalnie)")
                 Text(
-                    "Jeśli dodasz napisy, aplikacja precyzyjnie podzieli film na kwestie i rozpozna " +
-                        "postacie po formacie „IMIĘ: tekst” lub dialogach z myślnikiem. Bez napisów film " +
-                        "zostanie podzielony automatycznie na podstawie ciszy, a tekst trzeba będzie wpisać ręcznie.",
+                    "Jeśli dodasz napisy .srt/.vtt, aplikacja precyzyjnie podzieli film na kwestie i " +
+                        "rozpozna postacie po formacie „IMIĘ: tekst” lub dialogach z myślnikiem. Możesz też " +
+                        "wkleić eksport transkrypcji z TurboScribe (tekst z znacznikami czasu w nawiasach, " +
+                        "np. „(0:04) Wystarczy.”) jako plik .txt — postacie zostaną wtedy rozpoznane z " +
+                        "dźwięku filmu (tak jak bez napisów). Bez żadnego pliku film zostanie podzielony " +
+                        "automatycznie na podstawie mowy, a tekst rozpoznany offline.",
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                 )
                 if (state.subtitleFileName != null) {

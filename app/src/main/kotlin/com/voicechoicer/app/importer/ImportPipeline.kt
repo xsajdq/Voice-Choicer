@@ -16,6 +16,7 @@ import com.voicechoicer.core.model.DetectedCharacter
 import com.voicechoicer.core.model.Fragment
 import com.voicechoicer.core.subtitle.SpeakerDetector
 import com.voicechoicer.core.subtitle.SubtitleParser
+import com.voicechoicer.core.subtitle.TurboScribeParser
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -64,7 +65,14 @@ class ImportPipeline @Inject constructor(
             var warning: String? = null
             val (characters, fragments) = if (subtitleUri != null) {
                 onProgress(ImportProgress.ReadingSubtitles)
-                buildFromSubtitles(subtitleUri, durationMs)
+                val text = fileStore.readText(subtitleUri)
+                if (TurboScribeParser.looksLikeTurboScribe(text)) {
+                    val result = buildFromTurboScribeText(text, videoFile.absolutePath, durationMs, onProgress)
+                    warning = result.warning
+                    result.characters to result.fragments
+                } else {
+                    buildFromSubtitles(text, durationMs)
+                }
             } else {
                 val result = buildFromAutoDetection(videoFile.absolutePath, durationMs, onProgress)
                 warning = result.warning
@@ -87,13 +95,58 @@ class ImportPipeline @Inject constructor(
         }
     }
 
-    private fun buildFromSubtitles(subtitleUri: Uri, durationMs: Long): Pair<List<DetectedCharacter>, List<Fragment>> {
-        val text = fileStore.readText(subtitleUri)
+    private fun buildFromSubtitles(text: String, durationMs: Long): Pair<List<DetectedCharacter>, List<Fragment>> {
         val cues = SubtitleParser.parse(text).filter { it.startMs < durationMs }
         val fragments = SpeakerDetector.detectFragments(cues).map { it.copy(endMs = it.endMs.coerceAtMost(durationMs)) }
         val characters = SpeakerDetector.charactersOf(fragments)
         require(fragments.isNotEmpty()) { "Plik napisów nie zawiera żadnych poprawnych linii" }
         return characters to fragments
+    }
+
+    private data class TurboScribeResult(
+        val characters: List<DetectedCharacter>,
+        val fragments: List<Fragment>,
+        val warning: String?,
+    )
+
+    /**
+     * TurboScribe's export has accurate, human-quality text but no speaker labels at all - unlike
+     * .srt/.vtt files, there's no "NAME:" or dash-dialogue convention to lean on. So instead of
+     * dumping everything into one "unknown" character (see [SpeakerDetector]'s fallback), this
+     * reuses the same real diarization used for the no-subtitle path (see [buildFromAutoDetection])
+     * to figure out who's speaking, aligned to TurboScribe's own timestamps - giving the best of
+     * both: accurate text plus ML-based speaker detection instead of a heuristic guess.
+     */
+    private suspend fun buildFromTurboScribeText(
+        text: String,
+        videoPath: String,
+        durationMs: Long,
+        onProgress: (ImportProgress) -> Unit,
+    ): TurboScribeResult {
+        val cues = TurboScribeParser.parse(text).filter { it.startMs < durationMs }
+        require(cues.isNotEmpty()) {
+            "Nie udało się odczytać żadnych kwestii z tego pliku transkrypcji TurboScribe."
+        }
+
+        onProgress(ImportProgress.AnalyzingAudio)
+        val decoded = audioDecoder.decodeAudioTrack(videoPath)
+        val infos = cues.map { cue -> toSegmentInfo(decoded, cue.startMs, cue.endMs, cue.text, durationMs) }
+
+        val speakerLabels = assignSpeakerLabels(decoded, infos, onProgress)
+
+        val fragments = infos.mapIndexed { index, info ->
+            Fragment(
+                orderIndex = index,
+                startMs = info.startMs,
+                endMs = info.endMs,
+                text = info.text,
+                characterKey = "speaker_${speakerLabels[index]}",
+            )
+        }
+        val characters = speakerLabels.toSet().sorted().map { clusterIndex ->
+            DetectedCharacter("speaker_$clusterIndex", "Postać ${clusterIndex + 1}")
+        }
+        return TurboScribeResult(characters, fragments, warning = null)
     }
 
     private data class SilenceDetectionResult(
@@ -109,13 +162,8 @@ class ImportPipeline @Inject constructor(
      * boundaries (see [WhisperTranscriber.transcribeWithSegments] for why - short version: feeding
      * it isolated, silence-cut clips one at a time hurts both the transcription and the cut
      * points). Falls back to plain silence-based segmentation with blank text - for manual
-     * entry - if the model isn't available or found nothing.
-     *
-     * Each resulting segment is then assigned a speaker: preferably via [SherpaDiarizer]'s real
-     * ML-based diarization (pyannote segmentation + speaker embeddings), aligned to the
-     * transcript segments with [SpeakerAligner] since the two are independent passes over the
-     * same audio. If the diarizer is unavailable or finds nothing, falls back to
-     * [SpeakerClusterer]'s voice-pitch heuristic instead.
+     * entry - if the model isn't available or found nothing. Speakers are then assigned by
+     * [assignSpeakerLabels].
      */
     private suspend fun buildFromAutoDetection(
         videoPath: String,
@@ -155,27 +203,7 @@ class ImportPipeline @Inject constructor(
             "Nie udało się wykryć żadnych fragmentów mowy. Spróbuj dołączyć plik napisów (.srt/.vtt)."
         }
 
-        // Segments too quiet/short for a reliable pitch reading fall back to the batch's median
-        // voiced pitch, so a handful of unclear frames don't get spuriously split into their own
-        // "character" purely for lack of signal.
-        val voicedPitches = infos.map { it.pitchHz }.filter { it > 0.0 }.sorted()
-        val fallbackPitch = if (voicedPitches.isNotEmpty()) voicedPitches[voicedPitches.size / 2] else 150.0
-        val pitchesForClustering = infos.map { if (it.pitchHz > 0.0) it.pitchHz else fallbackPitch }
-        val pitchClusterLabels = SpeakerClusterer.cluster(pitchesForClustering)
-
-        onProgress(ImportProgress.DetectingSpeakers)
-        val diarizationSegments = if (sherpaDiarizer.ensureLoaded()) {
-            sherpaDiarizer.diarize(decoded.pcm, decoded.sampleRate)
-        } else {
-            emptyList()
-        }
-        val speakerLabels = if (diarizationSegments.isNotEmpty()) {
-            val ranges = infos.map { TimeRange(it.startMs, it.endMs) }
-            SpeakerAligner.assignSpeakers(ranges, diarizationSegments)
-                .mapIndexed { index, speakerId -> speakerId ?: pitchClusterLabels[index] }
-        } else {
-            pitchClusterLabels
-        }
+        val speakerLabels = assignSpeakerLabels(decoded, infos, onProgress)
 
         val fragments = infos.mapIndexed { index, info ->
             Fragment(
@@ -203,5 +231,40 @@ class ImportPipeline @Inject constructor(
         val endSample = ((endMs * decoded.sampleRate) / 1000).toInt().coerceIn(startSample, decoded.pcm.size)
         val pitch = PitchEstimator.estimateAveragePitchHz(decoded.pcm.copyOfRange(startSample, endSample), decoded.sampleRate)
         return SegmentInfo(startMs, endMs.coerceAtMost(durationMs), text, pitch)
+    }
+
+    /**
+     * Assigns each [SegmentInfo] a speaker: preferably via [SherpaDiarizer]'s real ML-based
+     * diarization (pyannote segmentation + speaker embeddings), aligned to the segments with
+     * [SpeakerAligner] since diarization and the segments' own source (Whisper or an external
+     * transcript) are independent passes over the same audio. Falls back to
+     * [SpeakerClusterer]'s voice-pitch heuristic if the diarizer is unavailable or finds nothing.
+     */
+    private fun assignSpeakerLabels(
+        decoded: AudioDecoder.DecodedAudio,
+        infos: List<SegmentInfo>,
+        onProgress: (ImportProgress) -> Unit,
+    ): List<Int> {
+        // Segments too quiet/short for a reliable pitch reading fall back to the batch's median
+        // voiced pitch, so a handful of unclear frames don't get spuriously split into their own
+        // "character" purely for lack of signal.
+        val voicedPitches = infos.map { it.pitchHz }.filter { it > 0.0 }.sorted()
+        val fallbackPitch = if (voicedPitches.isNotEmpty()) voicedPitches[voicedPitches.size / 2] else 150.0
+        val pitchesForClustering = infos.map { if (it.pitchHz > 0.0) it.pitchHz else fallbackPitch }
+        val pitchClusterLabels = SpeakerClusterer.cluster(pitchesForClustering)
+
+        onProgress(ImportProgress.DetectingSpeakers)
+        val diarizationSegments = if (sherpaDiarizer.ensureLoaded()) {
+            sherpaDiarizer.diarize(decoded.pcm, decoded.sampleRate)
+        } else {
+            emptyList()
+        }
+        return if (diarizationSegments.isNotEmpty()) {
+            val ranges = infos.map { TimeRange(it.startMs, it.endMs) }
+            SpeakerAligner.assignSpeakers(ranges, diarizationSegments)
+                .mapIndexed { index, speakerId -> speakerId ?: pitchClusterLabels[index] }
+        } else {
+            pitchClusterLabels
+        }
     }
 }
