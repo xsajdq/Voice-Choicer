@@ -56,6 +56,12 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
+      - name: Cache Vosk model archive
+        uses: actions/cache@v4
+        with:
+          path: ~/.vosk-model-cache
+          key: vosk-model-pl-small-0.22
+
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 

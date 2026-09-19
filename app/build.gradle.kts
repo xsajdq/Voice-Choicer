@@ -46,6 +46,60 @@ android {
     }
 }
 
+// Offline speech recognition needs a Vosk acoustic model bundled as an asset. The model is a
+// ~50MB binary blob, so it is fetched at build time (and cached under the user's home directory
+// across builds/CI runs) rather than committed to the repository - see .gitignore for the
+// resulting src/main/assets/model-pl-small/ directory.
+val voskModelVersion = "0.22"
+val voskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-pl-$voskModelVersion.zip"
+val voskModelAssetsDir = layout.projectDirectory.dir("src/main/assets/model-pl-small")
+
+val downloadVoskModel = tasks.register("downloadVoskModel") {
+    description = "Downloads and stages the offline Polish speech-recognition model into app assets."
+    val assetsDir = voskModelAssetsDir.asFile
+    val markerFile = File(assetsDir, ".vosk-model-version")
+    outputs.dir(assetsDir)
+    onlyIf { !markerFile.exists() || markerFile.readText().trim() != voskModelVersion }
+
+    doLast {
+        if (assetsDir.exists()) assetsDir.deleteRecursively()
+        assetsDir.mkdirs()
+
+        val cacheDir = File(System.getProperty("user.home"), ".vosk-model-cache")
+        cacheDir.mkdirs()
+        val zipFile = File(cacheDir, "vosk-model-small-pl-$voskModelVersion.zip")
+        if (!zipFile.exists()) {
+            logger.lifecycle("Downloading Vosk Polish model from $voskModelUrl ...")
+            java.net.URI(voskModelUrl).toURL().openStream().use { input ->
+                zipFile.outputStream().use { output -> input.copyTo(output) }
+            }
+        } else {
+            logger.lifecycle("Using cached Vosk model archive at $zipFile")
+        }
+
+        logger.lifecycle("Unpacking Vosk model into $assetsDir ...")
+        java.util.zip.ZipInputStream(zipFile.inputStream()).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                // Zip entries are "vosk-model-small-pl-<version>/<rest>"; drop that top-level dir.
+                val relativePath = entry.name.substringAfter('/', missingDelimiterValue = "")
+                if (relativePath.isNotEmpty() && !entry.isDirectory) {
+                    val outFile = File(assetsDir, relativePath)
+                    outFile.parentFile.mkdirs()
+                    outFile.outputStream().use { output -> zip.copyTo(output) }
+                }
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+        markerFile.writeText(voskModelVersion)
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(downloadVoskModel)
+}
+
 dependencies {
     implementation(project(":core"))
 
@@ -78,6 +132,8 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
+
+    implementation(libs.vosk.android)
 
     testImplementation(libs.junit)
 }

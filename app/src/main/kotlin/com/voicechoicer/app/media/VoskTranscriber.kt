@@ -1,0 +1,82 @@
+package com.voicechoicer.app.media
+
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
+import org.vosk.Model
+import org.vosk.Recognizer
+import org.vosk.android.StorageService
+
+/**
+ * Offline speech-to-text for the silence-detection import path (no
+ * subtitle file supplied), using a small Polish Vosk model bundled as an
+ * app asset (see the `downloadVoskModel` Gradle task). Loading the model
+ * is somewhat expensive, so it happens once and is cached for the process
+ * lifetime; if it ever fails (e.g. the asset wasn't bundled in this
+ * build), transcription is silently unavailable and callers fall back to
+ * empty text for manual entry.
+ */
+@Singleton
+class VoskTranscriber @Inject constructor(@ApplicationContext private val context: Context) {
+
+    private var model: Model? = null
+    private var loadFailed = false
+
+    val isAvailable: Boolean get() = model != null
+
+    suspend fun ensureLoaded(): Boolean {
+        if (model != null) return true
+        if (loadFailed) return false
+        return try {
+            model = unpackModel()
+            true
+        } catch (e: IOException) {
+            loadFailed = true
+            false
+        }
+    }
+
+    private suspend fun unpackModel(): Model = suspendCancellableCoroutine { continuation ->
+        StorageService.unpack(
+            context,
+            MODEL_ASSET_DIR,
+            "vosk-model-pl",
+            { unpackedModel -> continuation.resume(unpackedModel) },
+            { exception: IOException -> continuation.resumeWithException(exception) },
+        )
+    }
+
+    /** Transcribes mono PCM16 audio already resampled to [SAMPLE_RATE] Hz. Returns "" if unavailable or blank. */
+    fun transcribe(pcm16kHzMono: ShortArray): String {
+        val currentModel = model ?: return ""
+        if (pcm16kHzMono.isEmpty()) return ""
+
+        val recognizer = Recognizer(currentModel, SAMPLE_RATE.toFloat())
+        return try {
+            val bytes = ByteArray(pcm16kHzMono.size * 2)
+            ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(pcm16kHzMono)
+            recognizer.acceptWaveForm(bytes, bytes.size)
+            extractText(recognizer.finalResult)
+        } finally {
+            recognizer.close()
+        }
+    }
+
+    private fun extractText(resultJson: String): String {
+        val match = TEXT_FIELD_REGEX.find(resultJson) ?: return ""
+        return match.groupValues[1].trim()
+    }
+
+    companion object {
+        const val SAMPLE_RATE = 16000
+        private const val MODEL_ASSET_DIR = "model-pl-small"
+        private val TEXT_FIELD_REGEX = Regex(""""text"\s*:\s*"([^"]*)"""")
+    }
+}

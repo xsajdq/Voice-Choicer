@@ -13,6 +13,7 @@ media3 = "1.4.1"
 coroutines = "1.8.1"
 ksp = "2.0.20-1.0.25"
 junit = "4.13.2"
+vosk = "0.3.75"
 
 [libraries]
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -39,6 +40,7 @@ media3-common = { group = "androidx.media3", name = "media3-common", version.ref
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+vosk-android = { group = "com.alphacephei", name = "vosk-android", version.ref = "vosk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -13,12 +13,12 @@ siebie.
    - **Z napisami**: aplikacja dzieli klip dokładnie według linii napisów i
      próbuje wykryć postacie po formacie `IMIĘ: tekst` oraz po dialogach z
      myślnikiem (`- Cześć!` / `- Hej!` w jednej linii czasowej).
-   - **Bez napisów**: aplikacja dekoduje ścieżkę dźwiękową i wykrywa mowę
-     metodą energii sygnału (VAD oparte na ciszy) — wszystkie fragmenty
-     trafiają wtedy do jednej "nieznanej" postaci, a tekst do przeczytania
-     trzeba wpisać ręcznie. Na urządzeniu nie ma wbudowanego, w pełni
-     offline'owego rozpoznawania mowy z pliku, więc to świadomy kompromis
-     (patrz "Możliwe rozszerzenia" niżej).
+   - **Bez napisów**: aplikacja dekoduje ścieżkę dźwiękową, wykrywa mowę
+     metodą energii sygnału (VAD oparte na ciszy), automatycznie
+     transkrybuje każdy fragment offline (biblioteka Vosk z wbudowanym
+     modelem języka polskiego — działa całkowicie bez internetu) i
+     grupuje fragmenty na postacie na podstawie wysokości głosu (prosta
+     heurystyka, nie prawdziwa diaryzacja ML — patrz niżej).
 2. **Postacie** — zmieniasz nazwy wykrytych postaci, przypisujesz do nich
    graczy.
 3. **Gracze** — dodajesz osoby, które będą nagrywać głosy.
@@ -40,6 +40,12 @@ siebie.
     na fragmenty.
   - `audio/SilenceSegmenter.kt` — detekcja mowy na podstawie ciszy (fallback
     bez napisów).
+  - `audio/Resampler.kt` — prosty resampler PCM (np. 44.1 kHz → 16 kHz dla
+    Vosk).
+  - `audio/PitchEstimator.kt` — szacowanie wysokości głosu metodą
+    autokorelacji, sygnał wejściowy dla grupowania postaci.
+  - `audio/SpeakerClusterer.kt` — grupowanie fragmentów na postacie na
+    podstawie wysokości głosu (grupowanie aglomeracyjne z progiem w Hz).
   - `audio/TimelineMixer.kt` — układanie nagranych dźwięków na osi czasu
     filmu (miksowanie z obsługą nakładania się nagrań).
   - `audio/Wav.kt` — kodowanie/dekodowanie WAV PCM16.
@@ -52,8 +58,9 @@ siebie.
   - `importer/ImportPipeline.kt` — łączy `core` z Androidowym I/O
     (kopiowanie pliku, dekodowanie audio, zapis do bazy).
   - `media/` — `AudioDecoder` (MediaExtractor+MediaCodec → PCM),
-    `TakeRecorder` (AudioRecord), `DubExporter` (MediaCodec AAC encoder +
-    MediaMuxer, kopiowanie ścieżki wideo 1:1).
+    `VoskTranscriber` (offline rozpoznawanie mowy, model polski wbudowany
+    w assets), `TakeRecorder` (AudioRecord), `DubExporter` (MediaCodec AAC
+    encoder + MediaMuxer, kopiowanie ścieżki wideo 1:1).
   - `export/ExportService.kt` — usługa pierwszoplanowa budująca finalny plik
     w tle, z powiadomieniem o postępie.
   - `ui/` — ekrany Compose: lista projektów, import, postacie, gracze,
@@ -75,27 +82,50 @@ modułu `app`**. Żeby zbudować i uruchomić aplikację:
 ```
 
 Minimalne wymagania: Android Studio Koala+ / Gradle z dostępem do
-`google()` i `mavenCentral()`, `minSdk 26`, `compileSdk/targetSdk 35`.
+`google()` i `mavenCentral()`, `minSdk 26`, `compileSdk/targetSdk 35`, oraz
+dostęp do internetu przy pierwszym buildzie (pobranie modelu Vosk, patrz
+niżej — ~50 MB, potem cache'owane w `~/.vosk-model-cache`).
 
 ### Moduł `core` — działa od razu, bez Androida
 
 `core` to zwykły moduł Kotlin/JVM, więc jego testy jednostkowe uruchamiają
 się nawet w tym kontenerze (i zostały tu faktycznie uruchomione podczas
-tworzenia projektu — 19 testów, wszystkie zielone):
+tworzenia projektu — 36 testów, wszystkie zielone):
 
 ```bash
 gradle :core:test
 ```
 
-## Możliwe rozszerzenia
+## Rozpoznawanie mowy i postaci bez napisów — jak działa i jakie ma granice
 
-- **Prawdziwe rozpoznawanie mowy offline** — podpięcie biblioteki takiej jak
-  Vosk pozwoliłoby automatycznie transkrybować tekst także bez pliku
-  napisów (obecnie w tej ścieżce trzeba wpisać tekst ręcznie).
-- **Prawdziwa diaryzacja mówców** — obecna detekcja postaci bazuje na
-  formacie napisów (prefiks `IMIĘ:` lub dialog z myślnikiem); rozpoznawanie
-  głosu po barwie wymagałoby modelu ML i nie działa z samego dźwięku bez
-  takiego wsparcia.
+Gdy nie podasz pliku napisów, aplikacja robi wszystko sama, ale w pełni
+offline'owy, telefoniczny pipeline ma swoje granice:
+
+- **Transkrypcja (Vosk)**: mały model polski (`vosk-model-small-pl-0.22`,
+  ~50 MB, Apache 2.0, projekt Alphacephei) jest pobierany **przy budowaniu
+  aplikacji** (zadanie Gradle `downloadVoskModel`) i wbudowywany w APK —
+  nie jest w repozytorium (zbyt duży plik binarny), więc **do zbudowania
+  potrzebny jest dostęp do internetu** (pobiera się raz, potem jest
+  cache'owany). Model "small" jest szybki i lekki, ale mniej dokładny niż
+  duże modele chmurowe — oczekuj sensownej, ale nie perfekcyjnej
+  transkrypcji, zwłaszcza przy szumie w tle, gwarze lub szybkiej mowie.
+- **Grupowanie na postacie**: to **heurystyka**, nie prawdziwa diaryzacja
+  ML — `PitchEstimator` szacuje wysokość głosu (autokorelacja), a
+  `SpeakerClusterer` grupuje fragmenty o podobnej wysokości głosu
+  (różnica < 30 Hz = ta sama postać). Działa nieźle, gdy głosy wyraźnie się
+  różnią (np. dorosły i dziecko, wyraźnie niższy i wyższy głos); dwie
+  podobne barwowo dorosłe osoby tej samej płci mogą zostać błędnie
+  zgrupowane w jedną postać. Zawsze można to poprawić ręcznie na ekranie
+  "Postacie" i "Nagrywanie" (zmiana przypisania fragmentu do innej
+  postaci).
+
+### Możliwe dalsze rozszerzenia
+
+- **Prawdziwa diaryzacja mówców** (np. embeddingi głosu + klasteryzacja,
+  zamiast samej wysokości tonu) — dokładniejsza, ale wymaga dodatkowego
+  modelu ML i znacznie więcej pracy.
+- **Większy/dokładniejszy model Vosk** — kosztem rozmiaru APK i czasu
+  transkrypcji.
 - **Synchronizacja długości nagrania z oryginałem** — obecnie nagranie
   gracza jest wklejane od czasu startu oryginalnej kwestii; jeśli gracz
   mówi dłużej niż oryginał, nagranie nakłada się na kolejny fragment
