@@ -154,8 +154,8 @@ fun ImportScreen(
 private fun progressLabel(progress: ImportProgress?): String = when (progress) {
     is ImportProgress.CopyingVideo -> "Kopiowanie wideo…"
     is ImportProgress.ReadingSubtitles -> "Wczytywanie napisów…"
-    is ImportProgress.AnalyzingAudio -> "Analiza dźwięku (wykrywanie fragmentów mowy)…"
-    is ImportProgress.TranscribingSpeech -> "Rozpoznawanie mowy: ${progress.doneCount}/${progress.totalCount}…"
+    is ImportProgress.AnalyzingAudio -> "Analiza dźwięku…"
+    is ImportProgress.TranscribingSpeech -> "Rozpoznawanie mowy (może chwilę potrwać)…"
     is ImportProgress.Saving -> "Zapisywanie projektu…"
     is ImportProgress.Done, null -> ""
     is ImportProgress.Failed -> "Błąd: ${progress.message}"

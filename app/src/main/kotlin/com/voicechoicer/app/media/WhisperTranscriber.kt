@@ -12,13 +12,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Offline speech-to-text for the silence-detection import path (no
- * subtitle file supplied), using a bundled multilingual Whisper "base"
- * model (see the `downloadWhisperModel` Gradle task) via the
- * whisper-android wrapper around whisper.cpp. Notably more accurate than
- * small Kaldi-based models (e.g. Vosk's "small" checkpoints) at a
- * comparable size, at the cost of a larger APK and slower per-segment
- * transcription.
+ * Offline speech-to-text for the no-subtitle import path, using a bundled
+ * multilingual Whisper "base" model (see the `downloadWhisperModel` Gradle
+ * task) via the whisper-android wrapper around whisper.cpp. Notably more
+ * accurate than small Kaldi-based models (e.g. Vosk's "small" checkpoints)
+ * at a comparable size, at the cost of a larger APK and slower
+ * transcription. Also does its own segmentation (see [transcribeWithSegments]) -
+ * it is fed the whole track at once rather than pre-cut isolated clips.
  *
  * Loading the model is expensive (tens of MB to read + native init), so
  * it happens once and is cached for the process lifetime; if it ever
@@ -64,24 +64,38 @@ class WhisperTranscriber @Inject constructor(@ApplicationContext private val con
         return destFile
     }
 
-    /**
-     * Transcribes mono PCM16 audio at its native [sampleRate] (the library resamples internally).
-     * Returns "" if unavailable, too short to reliably decode, or if transcription throws (logged,
-     * not propagated - a bad segment shouldn't fail the whole import).
-     */
-    suspend fun transcribe(pcm: ShortArray, sampleRate: Int): String {
-        val currentModel = model ?: return ""
-        if (pcm.size < sampleRate / 4) return "" // <250ms: too little audio for a reliable decode
+    /** One utterance as Whisper itself split it: real word/sentence-aware boundaries, not a silence guess. */
+    data class Segment(val startMs: Long, val endMs: Long, val text: String)
 
-        val tempFile = File(context.cacheDir, "whisper_segment_${System.nanoTime()}.wav")
+    /**
+     * Transcribes the *whole* track at its native [sampleRate] (the library resamples internally)
+     * in a single call, and returns Whisper's own segmentation of it.
+     *
+     * This is deliberately not "cut into isolated clips with our own VAD, then transcribe each
+     * clip alone": Whisper's accuracy depends heavily on surrounding context, and feeding it tiny,
+     * silence-bounded fragments one at a time (which can slice a word in half at the boundary)
+     * measurably hurts quality. Letting Whisper see the continuous audio and choose its own
+     * segment boundaries - it uses its language model, not just an energy threshold - gives both
+     * better transcriptions and better-placed cut points.
+     *
+     * Returns an empty list if unavailable or on failure (logged, not propagated); the caller
+     * falls back to silence-based segmentation with manual text entry in that case.
+     */
+    suspend fun transcribeWithSegments(pcm: ShortArray, sampleRate: Int): List<Segment> {
+        val currentModel = model ?: return emptyList()
+        if (pcm.isEmpty()) return emptyList()
+
+        val tempFile = File(context.cacheDir, "whisper_track_${System.nanoTime()}.wav")
         return try {
             tempFile.writeBytes(Wav.encode(pcm, sampleRate))
             val result = Whisper.transcribe(currentModel, tempFile.absolutePath, WhisperConfig(language = "pl"))
-            Log.i(TAG, "Whisper result: ${result.text}")
-            result.text.trim()
+            Log.i(TAG, "Whisper produced ${result.segments.size} segment(s)")
+            result.segments
+                .map { Segment(it.startMs, it.endMs, it.text.trim()) }
+                .filter { it.text.isNotEmpty() && it.endMs > it.startMs }
         } catch (e: Exception) {
-            Log.e(TAG, "Transcription failed for a segment, leaving its text empty", e)
-            ""
+            Log.e(TAG, "Whole-track transcription failed, falling back to manual entry", e)
+            emptyList()
         } finally {
             tempFile.delete()
         }

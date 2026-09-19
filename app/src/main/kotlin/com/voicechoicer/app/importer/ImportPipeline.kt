@@ -61,7 +61,7 @@ class ImportPipeline @Inject constructor(
                 onProgress(ImportProgress.ReadingSubtitles)
                 buildFromSubtitles(subtitleUri, durationMs)
             } else {
-                val result = buildFromSilenceDetection(videoFile.absolutePath, durationMs, onProgress)
+                val result = buildFromAutoDetection(videoFile.absolutePath, durationMs, onProgress)
                 warning = result.warning
                 result.characters to result.fragments
             }
@@ -97,51 +97,49 @@ class ImportPipeline @Inject constructor(
         val warning: String?,
     )
 
+    private data class SegmentInfo(val startMs: Long, val endMs: Long, val text: String, val pitchHz: Double)
+
     /**
-     * No subtitles: find speech segments by silence detection, transcribe each one offline
-     * (Whisper, multilingual model - falls back to empty text if the model failed to load),
-     * estimate a voice-pitch feature per segment, and cluster those pitches into
-     * automatically-detected "characters". This is a heuristic, not real diarization - see
-     * SpeakerClusterer's docs.
+     * No subtitles: transcribe the whole track in one pass and let Whisper choose its own segment
+     * boundaries (see [WhisperTranscriber.transcribeWithSegments] for why - short version: feeding
+     * it isolated, silence-cut clips one at a time hurts both the transcription and the cut
+     * points). Falls back to plain silence-based segmentation with blank text - for manual
+     * entry - if the model isn't available or found nothing. Either way, each resulting segment
+     * gets a voice-pitch feature so [SpeakerClusterer] can group them into automatically-detected
+     * "characters" (a heuristic, not real diarization - see its docs).
      */
-    private suspend fun buildFromSilenceDetection(
+    private suspend fun buildFromAutoDetection(
         videoPath: String,
         durationMs: Long,
         onProgress: (ImportProgress) -> Unit,
     ): SilenceDetectionResult {
         onProgress(ImportProgress.AnalyzingAudio)
         val decoded = audioDecoder.decodeAudioTrack(videoPath)
-        val segments = SilenceSegmenter.segment(decoded.pcm, decoded.sampleRate)
-        require(segments.isNotEmpty()) {
-            "Nie udało się wykryć żadnych fragmentów mowy. Spróbuj dołączyć plik napisów (.srt/.vtt)."
-        }
 
         val transcriptionAvailable = whisperTranscriber.ensureLoaded()
-        val warning = if (!transcriptionAvailable) {
-            "Rozpoznawanie mowy niedostępne (${whisperTranscriber.lastError ?: "nieznany błąd"}) — wpisz tekst kwestii ręcznie."
-        } else {
-            null
-        }
+        var infos: List<SegmentInfo> = emptyList()
+        var warning: String? = null
 
-        data class SegmentInfo(val startMs: Long, val endMs: Long, val text: String, val pitchHz: Double)
-
-        val infos = segments.mapIndexed { index, segment ->
-            onProgress(ImportProgress.TranscribingSpeech(index, segments.size))
-
-            val startSample = ((segment.startMs * decoded.sampleRate) / 1000).toInt().coerceIn(0, decoded.pcm.size)
-            val endSample = ((segment.endMs * decoded.sampleRate) / 1000).toInt().coerceIn(startSample, decoded.pcm.size)
-            val segmentPcm = decoded.pcm.copyOfRange(startSample, endSample)
-
-            val pitch = PitchEstimator.estimateAveragePitchHz(segmentPcm, decoded.sampleRate)
-            val text = if (transcriptionAvailable) {
-                whisperTranscriber.transcribe(segmentPcm, decoded.sampleRate)
-            } else {
-                ""
+        if (transcriptionAvailable) {
+            onProgress(ImportProgress.TranscribingSpeech(0, 1))
+            val whisperSegments = whisperTranscriber.transcribeWithSegments(decoded.pcm, decoded.sampleRate)
+            onProgress(ImportProgress.TranscribingSpeech(1, 1))
+            infos = whisperSegments.map { seg -> toSegmentInfo(decoded, seg.startMs, seg.endMs, seg.text, durationMs) }
+            if (infos.isEmpty()) {
+                warning = "Rozpoznawanie mowy nie wykryło żadnego tekstu w tym nagraniu — kwestie trzeba będzie wpisać ręcznie."
             }
-
-            SegmentInfo(segment.startMs, segment.endMs.coerceAtMost(durationMs), text, pitch)
+        } else {
+            warning = "Rozpoznawanie mowy niedostępne (${whisperTranscriber.lastError ?: "nieznany błąd"}) — wpisz tekst kwestii ręcznie."
         }
-        onProgress(ImportProgress.TranscribingSpeech(segments.size, segments.size))
+
+        if (infos.isEmpty()) {
+            val silenceSegments = SilenceSegmenter.segment(decoded.pcm, decoded.sampleRate)
+            infos = silenceSegments.map { seg -> toSegmentInfo(decoded, seg.startMs, seg.endMs, "", durationMs) }
+        }
+
+        require(infos.isNotEmpty()) {
+            "Nie udało się wykryć żadnych fragmentów mowy. Spróbuj dołączyć plik napisów (.srt/.vtt)."
+        }
 
         // Segments too quiet/short for a reliable pitch reading fall back to the batch's median
         // voiced pitch, so a handful of unclear frames don't get spuriously split into their own
@@ -165,5 +163,18 @@ class ImportPipeline @Inject constructor(
             DetectedCharacter("speaker_$clusterIndex", "Postać ${clusterIndex + 1}")
         }
         return SilenceDetectionResult(characters, fragments, warning)
+    }
+
+    private fun toSegmentInfo(
+        decoded: AudioDecoder.DecodedAudio,
+        startMs: Long,
+        endMs: Long,
+        text: String,
+        durationMs: Long,
+    ): SegmentInfo {
+        val startSample = ((startMs * decoded.sampleRate) / 1000).toInt().coerceIn(0, decoded.pcm.size)
+        val endSample = ((endMs * decoded.sampleRate) / 1000).toInt().coerceIn(startSample, decoded.pcm.size)
+        val pitch = PitchEstimator.estimateAveragePitchHz(decoded.pcm.copyOfRange(startSample, endSample), decoded.sampleRate)
+        return SegmentInfo(startMs, endMs.coerceAtMost(durationMs), text, pitch)
     }
 }
