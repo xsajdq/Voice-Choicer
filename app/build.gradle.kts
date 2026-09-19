@@ -20,6 +20,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // sherpa-onnx's native library is only fetched for arm64-v8a (see downloadSherpaNativeLibs)
+        // to keep the APK small - matches real devices and the existing Whisper setup.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
@@ -81,8 +87,105 @@ val downloadWhisperModel = tasks.register("downloadWhisperModel") {
     }
 }
 
+// Real ML-based speaker diarization (pyannote segmentation + a wespeaker speaker-embedding
+// model, clustered by sherpa-onnx) needs sherpa's JNI native library - there is no Maven
+// artifact for Android, so the .so and the Kotlin API wrapper (committed under
+// app/src/main/kotlin/com/k2fsa/sherpa/onnx/) are the only ways to use it - plus two small
+// ONNX models. All fetched at build time and cached locally / in CI rather than committed -
+// see .gitignore for the resulting src/main/jniLibs/arm64-v8a/ and
+// src/main/assets/diarization-model/ directories, and SherpaDiarizer for how they're used.
+val sherpaVersion = "1.12.14"
+val sherpaNativeLibsUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/sherpa-onnx-v$sherpaVersion-android.tar.bz2"
+val pyannoteSegmentationUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
+val speakerEmbeddingUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx"
+val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs")
+val diarizationModelsDir = layout.projectDirectory.dir("src/main/assets/diarization-model")
+
+fun sherpaOnnxCacheDir(): File {
+    val cacheDir = File(System.getProperty("user.home"), ".sherpa-onnx-cache")
+    cacheDir.mkdirs()
+    return cacheDir
+}
+
+val downloadSherpaNativeLibs = tasks.register("downloadSherpaNativeLibs") {
+    description = "Downloads the sherpa-onnx JNI native library (arm64-v8a only; no Maven artifact exists for Android)."
+    val destFile = File(jniLibsDir.asFile, "arm64-v8a/libsherpa-onnx-jni.so")
+    outputs.file(destFile)
+    onlyIf { !destFile.exists() }
+
+    doLast {
+        val cacheDir = sherpaOnnxCacheDir()
+        val cachedArchive = File(cacheDir, "sherpa-onnx-v$sherpaVersion-android.tar.bz2")
+        if (!cachedArchive.exists()) {
+            logger.lifecycle("Downloading sherpa-onnx native libraries from $sherpaNativeLibsUrl ...")
+            URI(sherpaNativeLibsUrl).toURL().openStream().use { input ->
+                cachedArchive.outputStream().use { output -> input.copyTo(output) }
+            }
+        } else {
+            logger.lifecycle("Using cached sherpa-onnx archive at $cachedArchive")
+        }
+        copy {
+            from(tarTree(resources.bzip2(cachedArchive)))
+            include("jniLibs/arm64-v8a/**")
+            into(jniLibsDir.asFile)
+            eachFile { path = path.removePrefix("jniLibs/") }
+            includeEmptyDirs = false
+        }
+    }
+}
+
+val downloadDiarizationModels = tasks.register("downloadDiarizationModels") {
+    description = "Downloads the pyannote speaker-segmentation and wespeaker speaker-embedding models used for real ML-based diarization."
+    val assetsDir = diarizationModelsDir.asFile
+    val segmentationFile = File(assetsDir, "segmentation.onnx")
+    val embeddingFile = File(assetsDir, "embedding.onnx")
+    outputs.files(segmentationFile, embeddingFile)
+    onlyIf { !segmentationFile.exists() || !embeddingFile.exists() }
+
+    doLast {
+        assetsDir.mkdirs()
+        val cacheDir = sherpaOnnxCacheDir()
+
+        if (!segmentationFile.exists()) {
+            val cachedArchive = File(cacheDir, "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2")
+            if (!cachedArchive.exists()) {
+                logger.lifecycle("Downloading pyannote segmentation model from $pyannoteSegmentationUrl ...")
+                URI(pyannoteSegmentationUrl).toURL().openStream().use { input ->
+                    cachedArchive.outputStream().use { output -> input.copyTo(output) }
+                }
+            } else {
+                logger.lifecycle("Using cached pyannote segmentation archive at $cachedArchive")
+            }
+            val cachedModelFile = File(cacheDir, "pyannote-segmentation.int8.onnx")
+            if (!cachedModelFile.exists()) {
+                copy {
+                    from(tarTree(resources.bzip2(cachedArchive)))
+                    include("sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx")
+                    into(cacheDir)
+                    eachFile { path = "pyannote-segmentation.int8.onnx" }
+                    includeEmptyDirs = false
+                }
+            }
+            cachedModelFile.copyTo(segmentationFile, overwrite = true)
+        }
+
+        if (!embeddingFile.exists()) {
+            val cachedFile = File(cacheDir, "wespeaker_en_voxceleb_resnet34.onnx")
+            if (!cachedFile.exists()) {
+                logger.lifecycle("Downloading speaker embedding model from $speakerEmbeddingUrl ...")
+                URI(speakerEmbeddingUrl).toURL().openStream().use { input ->
+                    cachedFile.outputStream().use { output -> input.copyTo(output) }
+                }
+            } else {
+                logger.lifecycle("Using cached speaker embedding model at $cachedFile")
+            }
+            cachedFile.copyTo(embeddingFile, overwrite = true)
+        }
+    }
+}
+
 tasks.named("preBuild") {
-    dependsOn(downloadWhisperModel)
+    dependsOn(downloadWhisperModel, downloadSherpaNativeLibs, downloadDiarizationModels)
 }
 
 dependencies {

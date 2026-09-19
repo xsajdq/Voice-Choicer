@@ -62,6 +62,12 @@ jobs:
           path: ~/.whisper-model-cache
           key: whisper-model-base
 
+      - name: Cache sherpa-onnx native library and diarization models
+        uses: actions/cache@v4
+        with:
+          path: ~/.sherpa-onnx-cache
+          key: sherpa-onnx-1.12.14-diarization
+
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 

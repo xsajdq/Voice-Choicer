@@ -13,12 +13,14 @@ siebie.
    - **Z napisami**: aplikacja dzieli klip dokładnie według linii napisów i
      próbuje wykryć postacie po formacie `IMIĘ: tekst` oraz po dialogach z
      myślnikiem (`- Cześć!` / `- Hej!` w jednej linii czasowej).
-   - **Bez napisów**: aplikacja dekoduje ścieżkę dźwiękową, wykrywa mowę
-     metodą energii sygnału (VAD oparte na ciszy), automatycznie
-     transkrybuje każdy fragment offline (model Whisper "base", wielojęzyczny,
-     wbudowany w aplikację — działa całkowicie bez internetu) i grupuje
-     fragmenty na postacie na podstawie wysokości głosu (prosta heurystyka,
-     nie prawdziwa diaryzacja ML — patrz niżej).
+   - **Bez napisów**: aplikacja dekoduje ścieżkę dźwiękową, transkrybuje
+     cały fragment offline w jednym przebiegu (model Whisper "base",
+     wielojęzyczny, wbudowany w aplikację — działa całkowicie bez
+     internetu; sam dzieli dźwięk na kwestie), a następnie przypisuje każdej
+     kwestii mówcę przy pomocy prawdziwej diaryzacji ML (sherpa-onnx:
+     segmentacja pyannote + embeddingi głosu, klasteryzacja) — a jeśli model
+     diaryzacji jest niedostępny, przełącza się na prostszą heurystykę
+     wysokości głosu (patrz niżej).
 2. **Postacie** — zmieniasz nazwy wykrytych postaci, przypisujesz do nich
    graczy.
 3. **Gracze** — dodajesz osoby, które będą nagrywać głosy.
@@ -46,7 +48,12 @@ siebie.
   - `audio/PitchEstimator.kt` — szacowanie wysokości głosu metodą
     autokorelacji, sygnał wejściowy dla grupowania postaci.
   - `audio/SpeakerClusterer.kt` — grupowanie fragmentów na postacie na
-    podstawie wysokości głosu (grupowanie aglomeracyjne z progiem w Hz).
+    podstawie wysokości głosu (grupowanie aglomeracyjne z progiem w Hz) —
+    heurystyczny fallback, gdy prawdziwa diaryzacja ML jest niedostępna.
+  - `audio/SpeakerAligner.kt` — dopasowuje niezależne segmenty diaryzacji
+    (kto mówi kiedy) do segmentów transkrypcji (co powiedziano kiedy) po
+    zachodzeniu w czasie, bo to dwa oddzielne przebiegi po tym samym
+    dźwięku i ich granice się nie pokrywają.
   - `audio/TimelineMixer.kt` — układanie nagranych dźwięków na osi czasu
     filmu (miksowanie z obsługą nakładania się nagrań).
   - `audio/Wav.kt` — kodowanie/dekodowanie WAV PCM16.
@@ -60,7 +67,8 @@ siebie.
     (kopiowanie pliku, dekodowanie audio, zapis do bazy).
   - `media/` — `AudioDecoder` (MediaExtractor+MediaCodec → PCM),
     `WhisperTranscriber` (offline rozpoznawanie mowy, model Whisper
-    wbudowany w assets), `TakeRecorder` (AudioRecord), `DubExporter`
+    wbudowany w assets), `SherpaDiarizer` (offline diaryzacja mówców przez
+    sherpa-onnx), `TakeRecorder` (AudioRecord), `DubExporter`
     (MediaCodec AAC encoder + MediaMuxer, kopiowanie ścieżki wideo 1:1).
   - `export/ExportService.kt` — usługa pierwszoplanowa budująca finalny plik
     w tle, z powiadomieniem o postępie.
@@ -84,14 +92,17 @@ modułu `app`**. Żeby zbudować i uruchomić aplikację:
 
 Minimalne wymagania: Android Studio Koala+ / Gradle z dostępem do
 `google()` i `mavenCentral()`, `minSdk 26`, `compileSdk/targetSdk 35`, oraz
-dostęp do internetu przy pierwszym buildzie (pobranie modelu Whisper, patrz
-niżej — ~142 MB, potem cache'owane w `~/.whisper-model-cache`).
+dostęp do internetu przy pierwszym buildzie (pobranie modelu Whisper — patrz
+niżej, ~142 MB, cache'owane w `~/.whisper-model-cache` — oraz natywnej
+biblioteki i modeli sherpa-onnx do diaryzacji, razem ~55 MB, cache'owane w
+`~/.sherpa-onnx-cache`; GitHub, nie Google Maven, więc `dl.google.com`
+wystarcza dla samego Gradle/AGP).
 
 ### Moduł `core` — działa od razu, bez Androida
 
 `core` to zwykły moduł Kotlin/JVM, więc jego testy jednostkowe uruchamiają
 się nawet w tym kontenerze (i zostały tu faktycznie uruchomione podczas
-tworzenia projektu — 36 testów, wszystkie zielone):
+tworzenia projektu — 42 testy, wszystkie zielone):
 
 ```bash
 gradle :core:test
@@ -113,21 +124,26 @@ offline'owy, telefoniczny pipeline ma swoje granice:
   wcześniej) przy podobnym rozmiarze, kosztem wolniejszej transkrypcji i
   wymogu ABI `arm64-v8a` (biblioteka nie ma prebudowanych binarek dla
   starszych 32-bitowych urządzeń ani emulatorów x86).
-- **Grupowanie na postacie**: to **heurystyka**, nie prawdziwa diaryzacja
-  ML — `PitchEstimator` szacuje wysokość głosu (autokorelacja), a
-  `SpeakerClusterer` grupuje fragmenty o podobnej wysokości głosu
-  (różnica < 30 Hz = ta sama postać). Działa nieźle, gdy głosy wyraźnie się
-  różnią (np. dorosły i dziecko, wyraźnie niższy i wyższy głos); dwie
-  podobne barwowo dorosłe osoby tej samej płci mogą zostać błędnie
-  zgrupowane w jedną postać. Zawsze można to poprawić ręcznie na ekranie
-  "Postacie" i "Nagrywanie" (zmiana przypisania fragmentu do innej
-  postaci).
+- **Grupowanie na postacie (diaryzacja, sherpa-onnx)**: prawdziwy model ML
+  — segmentacja mowy modelem pyannote (`sherpa-onnx-pyannote-segmentation-3-0`,
+  wersja skwantyzowana int8, ~1.5 MB) + embeddingi głosu modelem WeSpeaker
+  (`wespeaker_en_voxceleb_resnet34.onnx`, ~26.5 MB), klasteryzowane przez
+  natywną bibliotekę sherpa-onnx (JNI, tylko ABI `arm64-v8a` — brak artefaktu
+  Maven dla Androida, więc natywna `.so` i wrapper Kotlin są pobierane/
+  dołączane ręcznie, patrz zadania Gradle `downloadSherpaNativeLibs` i
+  `downloadDiarizationModels`). Segmenty diaryzacji i segmenty transkrypcji
+  Whisper to dwa niezależne przebiegi po tym samym dźwięku, więc
+  `SpeakerAligner` łączy je po zachodzeniu w czasie. Jeśli model diaryzacji
+  się nie wczyta lub nic nie wykryje, aplikacja przełącza się na prostszą
+  heurystykę: `PitchEstimator` szacuje wysokość głosu (autokorelacja), a
+  `SpeakerClusterer` grupuje fragmenty o podobnej wysokości głosu (różnica
+  < 30 Hz = ta sama postać) — działa gorzej dla dwóch podobnych barwowo
+  dorosłych osób tej samej płci. W obu przypadkach zawsze można to
+  poprawić ręcznie na ekranie "Postacie" i "Nagrywanie" (zmiana
+  przypisania fragmentu do innej postaci).
 
 ### Możliwe dalsze rozszerzenia
 
-- **Prawdziwa diaryzacja mówców** (np. embeddingi głosu + klasteryzacja,
-  zamiast samej wysokości tonu) — dokładniejsza, ale wymaga dodatkowego
-  modelu ML i znacznie więcej pracy.
 - **Większy model Whisper** (`small`, ~466 MB) — kosztem rozmiaru APK i
   czasu transkrypcji, dla jeszcze lepszej dokładności.
 - **Synchronizacja długości nagrania z oryginałem** — obecnie nagranie

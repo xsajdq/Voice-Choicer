@@ -4,11 +4,14 @@ import android.net.Uri
 import com.voicechoicer.app.data.ProjectRepository
 import com.voicechoicer.app.data.files.AppFileStore
 import com.voicechoicer.app.media.AudioDecoder
+import com.voicechoicer.app.media.SherpaDiarizer
 import com.voicechoicer.app.media.VideoProbe
 import com.voicechoicer.app.media.WhisperTranscriber
 import com.voicechoicer.core.audio.PitchEstimator
 import com.voicechoicer.core.audio.SilenceSegmenter
+import com.voicechoicer.core.audio.SpeakerAligner
 import com.voicechoicer.core.audio.SpeakerClusterer
+import com.voicechoicer.core.audio.TimeRange
 import com.voicechoicer.core.model.DetectedCharacter
 import com.voicechoicer.core.model.Fragment
 import com.voicechoicer.core.subtitle.SpeakerDetector
@@ -22,6 +25,7 @@ sealed interface ImportProgress {
     data object ReadingSubtitles : ImportProgress
     data object AnalyzingAudio : ImportProgress
     data class TranscribingSpeech(val doneCount: Int, val totalCount: Int) : ImportProgress
+    data object DetectingSpeakers : ImportProgress
     data object Saving : ImportProgress
     data class Done(val projectId: Long, val warning: String? = null) : ImportProgress
     data class Failed(val message: String) : ImportProgress
@@ -31,7 +35,7 @@ sealed interface ImportProgress {
  * Orchestrates turning a picked video (+ optional subtitle file) into a
  * fully-formed project: copy the clip locally, split it into fragments
  * (from subtitles when available, otherwise via silence detection plus
- * offline speech-to-text and voice-based speaker clustering), detect
+ * offline speech-to-text and real ML-based speaker diarization), detect
  * characters, and persist everything.
  */
 class ImportPipeline @Inject constructor(
@@ -39,6 +43,7 @@ class ImportPipeline @Inject constructor(
     private val videoProbe: VideoProbe,
     private val audioDecoder: AudioDecoder,
     private val whisperTranscriber: WhisperTranscriber,
+    private val sherpaDiarizer: SherpaDiarizer,
     private val repository: ProjectRepository,
 ) {
 
@@ -104,9 +109,13 @@ class ImportPipeline @Inject constructor(
      * boundaries (see [WhisperTranscriber.transcribeWithSegments] for why - short version: feeding
      * it isolated, silence-cut clips one at a time hurts both the transcription and the cut
      * points). Falls back to plain silence-based segmentation with blank text - for manual
-     * entry - if the model isn't available or found nothing. Either way, each resulting segment
-     * gets a voice-pitch feature so [SpeakerClusterer] can group them into automatically-detected
-     * "characters" (a heuristic, not real diarization - see its docs).
+     * entry - if the model isn't available or found nothing.
+     *
+     * Each resulting segment is then assigned a speaker: preferably via [SherpaDiarizer]'s real
+     * ML-based diarization (pyannote segmentation + speaker embeddings), aligned to the
+     * transcript segments with [SpeakerAligner] since the two are independent passes over the
+     * same audio. If the diarizer is unavailable or finds nothing, falls back to
+     * [SpeakerClusterer]'s voice-pitch heuristic instead.
      */
     private suspend fun buildFromAutoDetection(
         videoPath: String,
@@ -147,8 +156,21 @@ class ImportPipeline @Inject constructor(
         val voicedPitches = infos.map { it.pitchHz }.filter { it > 0.0 }.sorted()
         val fallbackPitch = if (voicedPitches.isNotEmpty()) voicedPitches[voicedPitches.size / 2] else 150.0
         val pitchesForClustering = infos.map { if (it.pitchHz > 0.0) it.pitchHz else fallbackPitch }
+        val pitchClusterLabels = SpeakerClusterer.cluster(pitchesForClustering)
 
-        val clusterLabels = SpeakerClusterer.cluster(pitchesForClustering)
+        onProgress(ImportProgress.DetectingSpeakers)
+        val diarizationSegments = if (sherpaDiarizer.ensureLoaded()) {
+            sherpaDiarizer.diarize(decoded.pcm, decoded.sampleRate)
+        } else {
+            emptyList()
+        }
+        val speakerLabels = if (diarizationSegments.isNotEmpty()) {
+            val ranges = infos.map { TimeRange(it.startMs, it.endMs) }
+            SpeakerAligner.assignSpeakers(ranges, diarizationSegments)
+                .mapIndexed { index, speakerId -> speakerId ?: pitchClusterLabels[index] }
+        } else {
+            pitchClusterLabels
+        }
 
         val fragments = infos.mapIndexed { index, info ->
             Fragment(
@@ -156,10 +178,10 @@ class ImportPipeline @Inject constructor(
                 startMs = info.startMs,
                 endMs = info.endMs,
                 text = info.text,
-                characterKey = "speaker_${clusterLabels[index]}",
+                characterKey = "speaker_${speakerLabels[index]}",
             )
         }
-        val characters = clusterLabels.toSet().sorted().map { clusterIndex ->
+        val characters = speakerLabels.toSet().sorted().map { clusterIndex ->
             DetectedCharacter("speaker_$clusterIndex", "Postać ${clusterIndex + 1}")
         }
         return SilenceDetectionResult(characters, fragments, warning)

@@ -15,3 +15,9 @@ core/build/
 
 # Downloaded at build time by the :app:downloadWhisperModel Gradle task (see app/build.gradle.kts).
 app/src/main/assets/whisper-model/
+
+# Downloaded at build time by the :app:downloadSherpaNativeLibs/downloadDiarizationModels
+# Gradle tasks (see app/build.gradle.kts) - sherpa-onnx's native JNI library and the
+# pyannote/wespeaker diarization models.
+app/src/main/jniLibs/
+app/src/main/assets/diarization-model/

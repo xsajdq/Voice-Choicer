@@ -156,6 +156,7 @@ private fun progressLabel(progress: ImportProgress?): String = when (progress) {
     is ImportProgress.ReadingSubtitles -> "Wczytywanie napisów…"
     is ImportProgress.AnalyzingAudio -> "Analiza dźwięku…"
     is ImportProgress.TranscribingSpeech -> "Rozpoznawanie mowy (może chwilę potrwać)…"
+    is ImportProgress.DetectingSpeakers -> "Rozpoznawanie rozmówców…"
     is ImportProgress.Saving -> "Zapisywanie projektu…"
     is ImportProgress.Done, null -> ""
     is ImportProgress.Failed -> "Błąd: ${progress.message}"
