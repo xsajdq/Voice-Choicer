@@ -43,11 +43,11 @@ class SherpaDiarizer @Inject constructor(@ApplicationContext private val context
                     pyannote = OfflineSpeakerSegmentationPyannoteModelConfig(
                         model = "$MODEL_ASSET_DIR/segmentation.onnx",
                     ),
-                    numThreads = 2,
+                    numThreads = 1,
                 ),
                 embedding = SpeakerEmbeddingExtractorConfig(
                     model = "$MODEL_ASSET_DIR/embedding.onnx",
-                    numThreads = 2,
+                    numThreads = 1,
                 ),
                 clustering = FastClusteringConfig(numClusters = -1, threshold = 0.5f),
             )
@@ -85,7 +85,7 @@ class SherpaDiarizer @Inject constructor(@ApplicationContext private val context
                     )
                 }
                 .sortedBy { it.startMs }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Diarization failed", e)
             emptyList()
         }

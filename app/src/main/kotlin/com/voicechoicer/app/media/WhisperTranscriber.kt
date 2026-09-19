@@ -101,6 +101,16 @@ class WhisperTranscriber @Inject constructor(@ApplicationContext private val con
         }
     }
 
+    /**
+     * Drops the loaded model so its native memory can be reclaimed before another
+     * memory-heavy stage of the same import (speaker diarization, see [SherpaDiarizer])
+     * runs - two large native models resident at once risks the OS killing the app on
+     * lower-RAM phones. Transparently reloaded via [ensureLoaded] next time it's needed.
+     */
+    fun releaseForNow() {
+        model = null
+    }
+
     companion object {
         private const val MODEL_ASSET_DIR = "whisper-model"
         private const val MODEL_FILE_NAME = "ggml-base.bin"

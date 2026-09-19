@@ -141,6 +141,11 @@ class ImportPipeline @Inject constructor(
             warning = "Rozpoznawanie mowy niedostępne (${whisperTranscriber.lastError ?: "nieznany błąd"}) — wpisz tekst kwestii ręcznie."
         }
 
+        // Free Whisper's native model before loading the diarizer's - both are large native
+        // models, and holding them in memory at the same time risks the OS killing the app on
+        // lower-RAM phones. Whisper isn't needed again until the next import.
+        whisperTranscriber.releaseForNow()
+
         if (infos.isEmpty()) {
             val silenceSegments = SilenceSegmenter.segment(decoded.pcm, decoded.sampleRate)
             infos = silenceSegments.map { seg -> toSegmentInfo(decoded, seg.startMs, seg.endMs, "", durationMs) }
