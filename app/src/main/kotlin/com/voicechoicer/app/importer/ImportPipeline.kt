@@ -22,7 +22,7 @@ sealed interface ImportProgress {
     data object AnalyzingAudio : ImportProgress
     data class TranscribingSpeech(val doneCount: Int, val totalCount: Int) : ImportProgress
     data object Saving : ImportProgress
-    data class Done(val projectId: Long) : ImportProgress
+    data class Done(val projectId: Long, val warning: String? = null) : ImportProgress
     data class Failed(val message: String) : ImportProgress
 }
 
@@ -55,11 +55,14 @@ class ImportPipeline @Inject constructor(
             }
             val durationMs = videoProbe.durationMs(videoFile.absolutePath).coerceAtLeast(1)
 
+            var warning: String? = null
             val (characters, fragments) = if (subtitleUri != null) {
                 onProgress(ImportProgress.ReadingSubtitles)
                 buildFromSubtitles(subtitleUri, durationMs)
             } else {
-                buildFromSilenceDetection(videoFile.absolutePath, durationMs, onProgress)
+                val result = buildFromSilenceDetection(videoFile.absolutePath, durationMs, onProgress)
+                warning = result.warning
+                result.characters to result.fragments
             }
 
             onProgress(ImportProgress.Saving)
@@ -70,7 +73,7 @@ class ImportPipeline @Inject constructor(
                 detectedCharacters = characters,
                 fragments = fragments,
             )
-            onProgress(ImportProgress.Done(projectId))
+            onProgress(ImportProgress.Done(projectId, warning))
             return projectId
         } catch (t: Throwable) {
             videoFile.delete()
@@ -87,6 +90,12 @@ class ImportPipeline @Inject constructor(
         return characters to fragments
     }
 
+    private data class SilenceDetectionResult(
+        val characters: List<DetectedCharacter>,
+        val fragments: List<Fragment>,
+        val warning: String?,
+    )
+
     /**
      * No subtitles: find speech segments by silence detection, transcribe each one offline
      * (Vosk, Polish model - falls back to empty text if the model failed to load), estimate a
@@ -97,7 +106,7 @@ class ImportPipeline @Inject constructor(
         videoPath: String,
         durationMs: Long,
         onProgress: (ImportProgress) -> Unit,
-    ): Pair<List<DetectedCharacter>, List<Fragment>> {
+    ): SilenceDetectionResult {
         onProgress(ImportProgress.AnalyzingAudio)
         val decoded = audioDecoder.decodeAudioTrack(videoPath)
         val segments = SilenceSegmenter.segment(decoded.pcm, decoded.sampleRate)
@@ -106,6 +115,11 @@ class ImportPipeline @Inject constructor(
         }
 
         val transcriptionAvailable = voskTranscriber.ensureLoaded()
+        val warning = if (!transcriptionAvailable) {
+            "Rozpoznawanie mowy niedostępne (${voskTranscriber.lastError ?: "nieznany błąd"}) — wpisz tekst kwestii ręcznie."
+        } else {
+            null
+        }
 
         data class SegmentInfo(val startMs: Long, val endMs: Long, val text: String, val pitchHz: Double)
 
@@ -149,6 +163,6 @@ class ImportPipeline @Inject constructor(
         val characters = clusterLabels.toSet().sorted().map { clusterIndex ->
             DetectedCharacter("speaker_$clusterIndex", "Postać ${clusterIndex + 1}")
         }
-        return characters to fragments
+        return SilenceDetectionResult(characters, fragments, warning)
     }
 }

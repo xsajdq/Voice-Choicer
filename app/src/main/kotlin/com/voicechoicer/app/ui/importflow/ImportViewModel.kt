@@ -49,18 +49,18 @@ class ImportViewModel @Inject constructor(
 
     fun clearSubtitle() = _state.update { it.copy(subtitleUri = null, subtitleFileName = null) }
 
-    fun startImport(onImported: (Long) -> Unit) {
+    /** Navigation on success is driven by the UI observing [state].progress becoming [ImportProgress.Done]. */
+    fun startImport() {
         val current = _state.value
         val videoUri = current.videoUri ?: return
         viewModelScope.launch {
             _state.update { it.copy(error = null) }
             try {
-                val projectId = importPipeline.import(
+                importPipeline.import(
                     title = current.title.ifBlank { "Bez nazwy" },
                     videoUri = videoUri,
                     subtitleUri = current.subtitleUri,
                 ) { progress -> _state.update { it.copy(progress = progress) } }
-                onImported(projectId)
             } catch (t: Throwable) {
                 _state.update { it.copy(progress = ImportProgress.Failed(t.message ?: "Nieznany błąd"), error = t.message) }
             }

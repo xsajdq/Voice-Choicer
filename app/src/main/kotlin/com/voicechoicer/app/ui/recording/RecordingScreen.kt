@@ -91,6 +91,7 @@ fun RecordingScreen(
             items(rows, key = { it.fragment.id }) { row ->
                 FragmentCard(
                     row = row,
+                    videoPath = project?.localVideoPath,
                     allCharacters = allCharacters,
                     onTextChange = { viewModel.updateFragmentText(row.fragment.id, it) },
                     onReassign = { viewModel.reassignCharacter(row.fragment.id, it) },
@@ -122,6 +123,7 @@ fun RecordingScreen(
 @Composable
 private fun FragmentCard(
     row: FragmentRow,
+    videoPath: String?,
     allCharacters: List<CharacterEntity>,
     onTextChange: (String) -> Unit,
     onReassign: (Long) -> Unit,
@@ -129,6 +131,7 @@ private fun FragmentCard(
 ) {
     var text by remember(row.fragment.id, row.fragment.text) { mutableStateOf(row.fragment.text) }
     var showCharacterMenu by remember { mutableStateOf(false) }
+    var showPreview by remember(row.fragment.id) { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -142,6 +145,24 @@ private fun FragmentCard(
                     Icon(Icons.Filled.CheckCircle, contentDescription = "Nagrano", tint = MaterialTheme.colorScheme.primary)
                 } else {
                     Icon(Icons.Filled.RadioButtonUnchecked, contentDescription = "Brak nagrania")
+                }
+            }
+
+            if (videoPath != null) {
+                if (showPreview) {
+                    VideoSnippetPlayer(
+                        videoPath = videoPath,
+                        startMs = row.fragment.startMs,
+                        endMs = row.fragment.endMs,
+                    )
+                    TextButton(onClick = { showPreview = false }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Ukryj podgląd")
+                    }
+                } else {
+                    OutlinedButton(onClick = { showPreview = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                        Text(" Obejrzyj oryginalny fragment")
+                    }
                 }
             }
 

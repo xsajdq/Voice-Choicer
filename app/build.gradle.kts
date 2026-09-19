@@ -60,7 +60,9 @@ val voskModelAssetsDir = layout.projectDirectory.dir("src/main/assets/model-pl-s
 val downloadVoskModel = tasks.register("downloadVoskModel") {
     description = "Downloads and stages the offline Polish speech-recognition model into app assets."
     val assetsDir = voskModelAssetsDir.asFile
-    val markerFile = File(assetsDir, ".vosk-model-version")
+    // Kept outside assetsDir on purpose: Vosk's Model loader walks that whole directory expecting
+    // only the model's own files, and we don't want to risk it tripping over an extra stray file.
+    val markerFile = layout.buildDirectory.file("vosk-model-version.txt").get().asFile
     outputs.dir(assetsDir)
     onlyIf { !markerFile.exists() || markerFile.readText().trim() != voskModelVersion }
 
@@ -95,6 +97,7 @@ val downloadVoskModel = tasks.register("downloadVoskModel") {
                 entry = zip.nextEntry
             }
         }
+        markerFile.parentFile.mkdirs()
         markerFile.writeText(voskModelVersion)
     }
 }

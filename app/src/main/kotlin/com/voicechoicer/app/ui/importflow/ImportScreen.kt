@@ -50,7 +50,7 @@ fun ImportScreen(
 
     LaunchedEffect(state.progress) {
         val progress = state.progress
-        if (progress is ImportProgress.Done) onImported(progress.projectId)
+        if (progress is ImportProgress.Done && progress.warning == null) onImported(progress.projectId)
     }
 
     Scaffold(
@@ -125,12 +125,27 @@ fun ImportScreen(
 
             state.error?.let { Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
 
-            Button(
-                onClick = { viewModel.startImport(onImported) },
-                enabled = state.canStart,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Importuj i podziel na fragmenty")
+            val doneWithWarning = (state.progress as? ImportProgress.Done)?.warning
+            if (doneWithWarning != null) {
+                androidx.compose.material3.Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(doneWithWarning, style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
+                        Button(
+                            onClick = { onImported((state.progress as ImportProgress.Done).projectId) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Przejdź do projektu")
+                        }
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { viewModel.startImport() },
+                    enabled = state.canStart,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Importuj i podziel na fragmenty")
+                }
             }
         }
     }
