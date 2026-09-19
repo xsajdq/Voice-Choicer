@@ -1,6 +1,7 @@
 package com.voicechoicer.app.ui.importflow
 
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voicechoicer.app.importer.ImportPipeline
@@ -62,8 +63,33 @@ class ImportViewModel @Inject constructor(
                     subtitleUri = current.subtitleUri,
                 ) { progress -> _state.update { it.copy(progress = progress) } }
             } catch (t: Throwable) {
-                _state.update { it.copy(progress = ImportProgress.Failed(t.message ?: "Nieznany błąd"), error = t.message) }
+                Log.e(TAG, "Import failed", t)
+                val detail = describe(t)
+                _state.update { it.copy(progress = ImportProgress.Failed(detail), error = detail) }
             }
         }
+    }
+
+    /**
+     * A bare exception class name with no message (e.g. "NoClassDefFoundError") tells a user
+     * nothing actionable, and [Throwable.message] alone drops that class name entirely - so this
+     * always includes the exception's type, plus every cause in the chain, so a screenshot of the
+     * error is actually debuggable without needing device logs.
+     */
+    private fun describe(t: Throwable): String = buildString {
+        var current: Throwable? = t
+        var seen = 0
+        while (current != null && seen < 5) {
+            if (seen > 0) append("\nPrzyczyna: ")
+            append(current::class.qualifiedName ?: current.javaClass.name)
+            current.message?.takeIf { it.isNotBlank() }?.let { append(": ").append(it) }
+            val next = current.cause
+            current = if (next === current) null else next
+            seen++
+        }
+    }
+
+    private companion object {
+        private const val TAG = "ImportViewModel"
     }
 }
