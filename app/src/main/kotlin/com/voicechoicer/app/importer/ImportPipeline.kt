@@ -75,7 +75,7 @@ class ImportPipeline @Inject constructor(
                 fragments = fragments,
             )
             onProgress(ImportProgress.Done(projectId, warning))
-            return projectId
+            projectId
         } catch (t: Throwable) {
             videoFile.delete()
             throw t
