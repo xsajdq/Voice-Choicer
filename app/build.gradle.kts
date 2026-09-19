@@ -1,3 +1,6 @@
+import java.net.URI
+import java.util.zip.ZipInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -70,7 +73,7 @@ val downloadVoskModel = tasks.register("downloadVoskModel") {
         val zipFile = File(cacheDir, "vosk-model-small-pl-$voskModelVersion.zip")
         if (!zipFile.exists()) {
             logger.lifecycle("Downloading Vosk Polish model from $voskModelUrl ...")
-            java.net.URI(voskModelUrl).toURL().openStream().use { input ->
+            URI(voskModelUrl).toURL().openStream().use { input ->
                 zipFile.outputStream().use { output -> input.copyTo(output) }
             }
         } else {
@@ -78,7 +81,7 @@ val downloadVoskModel = tasks.register("downloadVoskModel") {
         }
 
         logger.lifecycle("Unpacking Vosk model into $assetsDir ...")
-        java.util.zip.ZipInputStream(zipFile.inputStream()).use { zip ->
+        ZipInputStream(zipFile.inputStream()).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
                 // Zip entries are "vosk-model-small-pl-<version>/<rest>"; drop that top-level dir.
