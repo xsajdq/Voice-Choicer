@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,7 +59,7 @@ fun ImportScreen(
                 title = { Text("Nowy fragment") },
                 navigationIcon = {
                     IconButton(onClick = onBack, enabled = !state.isImporting) {
-                        Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wstecz")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wstecz")
                     }
                 },
             )
@@ -99,7 +102,7 @@ fun ImportScreen(
                     ) {
                         Text(state.subtitleFileName!!, modifier = Modifier.weight(1f))
                         IconButton(onClick = viewModel::clearSubtitle, enabled = !state.isImporting) {
-                            Icon(androidx.compose.material.icons.Icons.Filled.Close, contentDescription = "Usuń napisy")
+                            Icon(Icons.Filled.Close, contentDescription = "Usuń napisy")
                         }
                     }
                 } else {
