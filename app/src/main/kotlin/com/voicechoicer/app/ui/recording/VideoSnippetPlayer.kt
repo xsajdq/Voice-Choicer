@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -31,18 +34,41 @@ import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-/** Plays just the [startMs, endMs) slice of the source clip so a player can watch the original delivery before recording. */
+/**
+ * Plays just the [startMs, endMs) slice of the source clip, with picture and
+ * original sound, so a player can see/hear exactly how the line was
+ * delivered before recording their own take. Plays automatically once as
+ * soon as it's ready (so opening the recording sheet immediately shows the
+ * original delivery with no extra taps needed), and force-pauses itself
+ * whenever [forcePause] is true - used while the mic is actually recording,
+ * so the phone's own speaker output doesn't bleed into the take.
+ */
 @Composable
-fun VideoSnippetPlayer(videoPath: String, startMs: Long, endMs: Long, modifier: Modifier = Modifier) {
+fun VideoSnippetPlayer(
+    videoPath: String,
+    startMs: Long,
+    endMs: Long,
+    forcePause: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val player = remember { ExoPlayer.Builder(context).build() }
     var isPlaying by remember { mutableStateOf(false) }
     val latestEndMs = rememberUpdatedState(endMs)
 
-    LaunchedEffect(videoPath) {
+    LaunchedEffect(videoPath, startMs) {
         player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(videoPath))))
         player.prepare()
         player.seekTo(startMs)
+        player.play()
+        isPlaying = true
+    }
+
+    LaunchedEffect(forcePause) {
+        if (forcePause && player.isPlaying) {
+            player.pause()
+            isPlaying = false
+        }
     }
 
     DisposableEffect(Unit) {
@@ -60,6 +86,7 @@ fun VideoSnippetPlayer(videoPath: String, startMs: Long, endMs: Long, modifier: 
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Oryginalny fragment", style = MaterialTheme.typography.labelLarge)
         AndroidView(
             factory = {
                 PlayerView(context).apply {
@@ -70,19 +97,37 @@ fun VideoSnippetPlayer(videoPath: String, startMs: Long, endMs: Long, modifier: 
             modifier = modifier.fillMaxWidth().aspectRatio(16f / 9f),
         )
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            IconButton(onClick = {
-                player.seekTo(startMs)
-                player.play()
-                isPlaying = true
-            }) {
+            IconButton(
+                onClick = {
+                    player.seekTo(startMs)
+                    player.play()
+                    isPlaying = true
+                },
+                enabled = !forcePause,
+            ) {
                 Icon(Icons.Filled.Replay, contentDescription = "Odtwórz od początku fragmentu")
             }
-            IconButton(onClick = {
-                if (player.currentPosition >= endMs || player.currentPosition < startMs) player.seekTo(startMs)
-                player.play()
-                isPlaying = true
-            }) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = "Odtwórz")
+            IconButton(
+                onClick = {
+                    if (isPlaying) {
+                        player.pause()
+                        isPlaying = false
+                    } else {
+                        if (player.currentPosition >= endMs || player.currentPosition < startMs) player.seekTo(startMs)
+                        player.play()
+                        isPlaying = true
+                    }
+                },
+                enabled = !forcePause,
+            ) {
+                if (isPlaying) {
+                    Icon(Icons.Filled.Pause, contentDescription = "Pauza")
+                } else {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = "Odtwórz")
+                }
+            }
+            if (forcePause) {
+                Text("(zatrzymane na czas nagrywania)", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
