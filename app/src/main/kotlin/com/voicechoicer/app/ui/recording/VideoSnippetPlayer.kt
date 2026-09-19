@@ -39,16 +39,20 @@ import kotlinx.coroutines.isActive
  * original sound, so a player can see/hear exactly how the line was
  * delivered before recording their own take. Plays automatically once as
  * soon as it's ready (so opening the recording sheet immediately shows the
- * original delivery with no extra taps needed), and force-pauses itself
- * whenever [forcePause] is true - used while the mic is actually recording,
- * so the phone's own speaker output doesn't bleed into the take.
+ * original delivery with no extra taps needed).
+ *
+ * While [muteWhileRecording] is true - the mic is actually recording - the
+ * picture keeps playing (and looping over [startMs, endMs) rather than
+ * freezing at the end) so the player can keep watching the character's lips
+ * for timing reference, but the original audio is muted so the phone's own
+ * speaker output doesn't bleed into the take.
  */
 @Composable
 fun VideoSnippetPlayer(
     videoPath: String,
     startMs: Long,
     endMs: Long,
-    forcePause: Boolean = false,
+    muteWhileRecording: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -64,10 +68,16 @@ fun VideoSnippetPlayer(
         isPlaying = true
     }
 
-    LaunchedEffect(forcePause) {
-        if (forcePause && player.isPlaying) {
-            player.pause()
-            isPlaying = false
+    LaunchedEffect(player, muteWhileRecording) {
+        player.volume = if (muteWhileRecording) 0f else 1f
+        if (muteWhileRecording) {
+            // Recording just started: keep the visual lip-sync reference moving regardless of
+            // whatever state playback was already in (paused, finished, mid-scrub, ...).
+            if (player.currentPosition >= latestEndMs.value || player.currentPosition < startMs) {
+                player.seekTo(startMs)
+            }
+            player.play()
+            isPlaying = true
         }
     }
 
@@ -75,11 +85,15 @@ fun VideoSnippetPlayer(
         onDispose { player.release() }
     }
 
-    LaunchedEffect(player, isPlaying) {
+    LaunchedEffect(player, isPlaying, muteWhileRecording) {
         while (isActive && isPlaying) {
             if (player.currentPosition >= latestEndMs.value) {
-                player.pause()
-                isPlaying = false
+                if (muteWhileRecording) {
+                    player.seekTo(startMs)
+                } else {
+                    player.pause()
+                    isPlaying = false
+                }
             }
             delay(50)
         }
@@ -103,7 +117,7 @@ fun VideoSnippetPlayer(
                     player.play()
                     isPlaying = true
                 },
-                enabled = !forcePause,
+                enabled = !muteWhileRecording,
             ) {
                 Icon(Icons.Filled.Replay, contentDescription = "Odtwórz od początku fragmentu")
             }
@@ -118,7 +132,7 @@ fun VideoSnippetPlayer(
                         isPlaying = true
                     }
                 },
-                enabled = !forcePause,
+                enabled = !muteWhileRecording,
             ) {
                 if (isPlaying) {
                     Icon(Icons.Filled.Pause, contentDescription = "Pauza")
@@ -126,8 +140,8 @@ fun VideoSnippetPlayer(
                     Icon(Icons.Filled.PlayArrow, contentDescription = "Odtwórz")
                 }
             }
-            if (forcePause) {
-                Text("(zatrzymane na czas nagrywania)", style = MaterialTheme.typography.bodySmall)
+            if (muteWhileRecording) {
+                Text("(bez dźwięku podczas nagrywania)", style = MaterialTheme.typography.bodySmall)
             }
         }
     }

@@ -244,7 +244,7 @@ private fun RecordingSheet(
                 videoPath = videoPath,
                 startMs = state.fragment.fragment.startMs,
                 endMs = state.fragment.fragment.endMs,
-                forcePause = state.phase == RecordingPhase.RECORDING,
+                muteWhileRecording = state.phase == RecordingPhase.RECORDING,
             )
 
             PlayerPicker(players = players, selectedPlayerId = state.selectedPlayerId, onSelectPlayer = onSelectPlayer)
